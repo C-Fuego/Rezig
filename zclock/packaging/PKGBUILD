@@ -1,0 +1,26 @@
+pkgname=zclock
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="tty-clock clone written in Zig"
+arch=('x86_64')
+url=""
+license=('MIT')
+depends=()
+makedepends=('zig')
+source=()
+sha256sums=()
+
+build() {
+  mkdir -p "$srcdir/build"
+  cp -a "$startdir/../src/." "$srcdir/build/"
+  cd "$srcdir/build"
+  ZIG_GLOBAL_CACHE_DIR="$srcdir/.zig-global" zig build -Doptimize=ReleaseFast \
+    --prefix "$srcdir/out" --cache-dir "$srcdir/.zig-cache"
+}
+
+package() {
+  install -Dm755 "$srcdir/out/bin/zclock" "$pkgdir/usr/bin/zclock"
+  install -Dm644 "$srcdir/build/README.md" "$pkgdir/usr/share/doc/zclock/README.md"
+  [ -f "$srcdir/build/LICENSE" ] && install -Dm644 "$srcdir/build/LICENSE" "$pkgdir/usr/share/licenses/zclock/LICENSE"
+  return 0
+}

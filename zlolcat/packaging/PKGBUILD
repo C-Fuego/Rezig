@@ -1,0 +1,26 @@
+pkgname=zlolcat
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="lolcat clone written in Zig"
+arch=('x86_64')
+url=""
+license=('MIT')
+depends=()
+makedepends=('zig-master-bin')
+source=()
+sha256sums=()
+
+build() {
+  mkdir -p "$srcdir/build"
+  cp -a "$startdir/../src/." "$srcdir/build/"
+  cd "$srcdir/build"
+  ZIG_GLOBAL_CACHE_DIR="$srcdir/.zig-global" zig build -Doptimize=ReleaseFast \
+    --prefix "$srcdir/out" --cache-dir "$srcdir/.zig-cache"
+}
+
+package() {
+  install -Dm755 "$srcdir/out/bin/zlolcat" "$pkgdir/usr/bin/zlolcat"
+  install -Dm644 "$srcdir/build/README.md" "$pkgdir/usr/share/doc/zlolcat/README.md"
+  [ -f "$srcdir/build/LICENSE" ] && install -Dm644 "$srcdir/build/LICENSE" "$pkgdir/usr/share/licenses/zlolcat/LICENSE"
+  return 0
+}

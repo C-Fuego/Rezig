@@ -1,0 +1,40 @@
+# Maintainer: C-Fuego
+pkgname=zeraora
+pkgver=0.3.0.r4.g103aef4
+pkgrel=1
+pkgdesc="Print pokemon sprites in your terminal"
+arch=('x86_64' 'aarch64')
+url="https://github.com/SHORiN-KiWATA/zeraora"
+license=('GPL-3.0-only')
+makedepends=('zig-master-bin')
+# Builds from the checkout this packaging directory lives in. When publishing,
+# point this at git+https://github.com/SHORiN-KiWATA/zeraora.git instead and
+# drop the _repo line.
+_repo="$(realpath -- "$startdir/..")"
+source=("$pkgname::git+file://$_repo")
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "$srcdir/$pkgname"
+    if desc=$(git describe --long --tags --abbrev=7 2>/dev/null); then
+        printf '%s' "$desc" | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+    else
+        printf '0.3.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+    fi
+}
+
+build() {
+    cd "$srcdir/$pkgname"
+    zig build -Doptimize=ReleaseFast --summary all
+}
+
+check() {
+    cd "$srcdir/$pkgname"
+    zig build test -Doptimize=ReleaseFast
+}
+
+package() {
+    cd "$srcdir/$pkgname"
+    DESTDIR="$pkgdir" zig build -Doptimize=ReleaseFast --prefix /usr install
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

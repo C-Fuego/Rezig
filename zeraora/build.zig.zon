@@ -1,0 +1,15 @@
+.{
+    .name = .zeraora,
+    .version = "0.3.0",
+    .fingerprint = 0xe9f22b9ce4c29042,
+    .minimum_zig_version = "0.18.0-dev.935",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "embed.zig",
+        "assets",
+        "LICENSE",
+        "README.md",
+    },
+}

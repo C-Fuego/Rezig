@@ -1,0 +1,399 @@
+//! figlet 2.2.5 command-line parsing for ziglet.
+//!
+//! Options are processed left to right and every option has an inverse, just
+//! like figlet. Long options are ziglet conveniences (figlet itself only has
+//! short options); their names follow the figlet manpage wording.
+
+const std = @import("std");
+const Io = std.Io;
+const render = @import("textfig").render;
+
+pub const name = "ziglet";
+pub const version_text =
+    \\ziglet 1.0.0 - FIGlet 2.2.5 compatible
+    \\FIGlet Copyright (C) 1991-2012 Glenn Chappell, Ian Chai, John Cowan,
+    \\Christiaan Keet and Claudio Matsuoka
+    \\Internet: <info@figlet.org> Version: 2.2.5, date: 31 May 2012
+    \\
+    \\ziglet, along with the various FIGlet fonts and documentation, may be
+    \\freely copied and distributed.
+    \\
+    \\If you use FIGlet, please send an e-mail message to <info@figlet.org>.
+    \\
+    \\The latest version of FIGlet is available from the web site,
+    \\        http://www.figlet.org/
+    \\
+    \\Usage: ziglet [ -cklnoprstvxDELNRSWX ] [ -d fontdirectory ]
+    \\               [ -f fontfile ] [ -m smushmode ] [ -w outputwidth ]
+    \\               [ -C controlfile ] [ -I infocode ] [ message ]
+    \\
+;
+
+pub const help_text =
+    \\Usage: ziglet [ -cklnoprstvxDELNRSWX ] [ -d fontdirectory ]
+    \\               [ -f fontfile ] [ -m smushmode ] [ -w outputwidth ]
+    \\               [ -C controlfile ] [ -I infocode ] [ message ]
+    \\
+    \\ziglet prints "message", or standard input, using large FIGcharacters
+    \\made of ordinary sub-characters. Message arguments are words joined by
+    \\spaces. Options are read from left to right and only the last option that
+    \\affects a parameter has any effect; almost every option has an inverse.
+    \\
+    \\  -f fontfile        Select the font.  The .flf suffix may be left off of
+    \\                     fontfile, and the .tlf suffix is accepted as well.
+    \\  -d fontdirectory   Change the default font directory.
+    \\  -c                 Center the output horizontally.
+    \\  -l                 Make the output flush-left.
+    \\  -r                 Make the output flush-right.
+    \\  -x                 Set the justification according to whether
+    \\                     left-to-right or right-to-left text is selected
+    \\                     (default).
+    \\  -t                 Set the outputwidth to the terminal width.
+    \\  -w outputwidth     Set the outputwidth (normally 80).  An outputwidth of
+    \\                     1 prints each non-space FIGcharacter on a separate
+    \\                     line, no matter how wide it is.
+    \\  -p                 Paragraph mode: a line break inside a paragraph is
+    \\                     treated as a blank between words.
+    \\  -n                 Normal mode: every newline produces a line break
+    \\                     (default).
+    \\  -D                 Switch to the German (ISO 646-DE) character set.
+    \\  -E                 Turn off -D processing (default).
+    \\  -C controlfile     Add controlfile to the control file list.
+    \\  -N                 Clear the control file list.
+    \\  -m smushmode       Set the layout mode: -1 full width, 0 kerning, 1..63
+    \\                     controlled smushing rule bits, -2 font default.
+    \\  -s                 Use the font's own layout, otherwise overlap
+    \\                     (default).
+    \\  -S                 Force smushing.
+    \\  -k                 Kern: characters touch, but never overlap.
+    \\  -W                 Render every FIGcharacter at full width.
+    \\  -o                 Universal overlapping.
+    \\  -L                 Force left-to-right printing.
+    \\  -R                 Force right-to-left printing.
+    \\  -X                 Use the font's print direction (default).
+    \\  -A                 Take input only from the message arguments.
+    \\  -v                 Print version and copyright information, then the
+    \\                     usage line.
+    \\  -I infocode        Print a FIGlet info code and exit: 0 copyright and
+    \\                     version, 1 version integer (20205), 2 font directory,
+    \\                     3 font name, 4 output width, 5 supported formats.
+    \\                     -1 means normal operation.
+    \\
+    \\Extended options:
+    \\  -h, --help             Display this help and exit (FIGlet's own -h is
+    \\                         the HZ input mode, which is not implemented).
+    \\  -i, --file FILE        Render FILE ("-" = stdin); repeatable.
+    \\      --list-fonts       List the fonts in the search path and exit.
+    \\      --font NAME        Same as -f; --font-dir DIR is the same as -d.
+    \\      --control FILE     Same as -C; --no-controls is the same as -N.
+    \\      --layout MODE      Same as -m; --force-smush (same as -S),
+    \\                         --default-layout (-s), --kerning (-k),
+    \\                         --full-width (-W) and --overflow (-o).
+    \\      --width N          Same as -w; --term-width is the same as -t.
+    \\      --center, --left, --right
+    \\                         Same as -c, -l and -r; --default-justify is -x.
+    \\      --left-to-right, --right-to-left, --default-direction
+    \\                         Same as -L, -R and -X.
+    \\      --paragraph, --no-paragraph
+    \\                         Same as -p and -n.
+    \\      --german, --no-german
+    \\                         Same as -D and -E.
+    \\      --infocode CODE    Same as -I; --version is the same as -v.
+    \\
+    \\Font search order: -d DIR, $FIGLET_FONTDIR, $XDG_DATA_HOME/figlet (or
+    \\~/.local/share/figlet), /usr/share/figlet, then the current directory.
+    \\Names expand to name, name.flf[.gz|.zip], name.tlf[.gz|.zip].
+    \\Compressed fonts use the system zlib. The built-in "term" font always
+    \\works (one row, no smushing).
+    \\
+;
+
+pub const Options = struct {
+    help: bool = false,
+    version: bool = false,
+    list_fonts: bool = false,
+    infocode: ?i32 = null,
+
+    font: []const u8 = "standard",
+    font_explicit: bool = false,
+    font_dir: ?[]const u8 = null,
+    controls: std.ArrayList([]const u8) = .empty,
+
+    layout_ops: std.ArrayList(render.LayoutOp) = .empty,
+    width_value: ?usize = null,
+    use_term_width: bool = false,
+
+    justify: ?@import("textfig").font.Justify = null,
+    direction: union(enum) { auto, ltr, rtl } = .auto,
+
+    paragraph: bool = false,
+    german: bool = false,
+    cmd_input: bool = false,
+
+    files: std.ArrayList([]const u8) = .empty,
+    operands: std.ArrayList([]const u8) = .empty,
+};
+
+pub const Error = error{ InvalidArgs, OutOfMemory };
+
+fn invalid(errw: *Io.Writer, comptime fmt: []const u8, args: anytype) Error {
+    errw.print("{s}: " ++ fmt ++ "\n", .{name} ++ args) catch {};
+    return error.InvalidArgs;
+}
+
+fn eq(a: []const u8, b: []const u8) bool {
+    return std.mem.eql(u8, a, b);
+}
+
+fn nextValue(
+    inline_value: ?[]const u8,
+    argv: []const [:0]const u8,
+    index: *usize,
+    errw: *Io.Writer,
+    opt: []const u8,
+) Error![]const u8 {
+    if (inline_value) |v| return v;
+    if (index.* + 1 >= argv.len) return invalid(errw, "option '{s}' requires an argument", .{opt});
+    index.* += 1;
+    return argv[index.*];
+}
+
+fn parseUsize(errw: *Io.Writer, opt: []const u8, text: []const u8) Error!usize {
+    return std.fmt.parseInt(usize, text, 10) catch
+        return invalid(errw, "invalid value for '{s}': '{s}'", .{ opt, text });
+}
+
+fn parseI32(errw: *Io.Writer, opt: []const u8, text: []const u8) Error!i32 {
+    return std.fmt.parseInt(i32, text, 10) catch
+        return invalid(errw, "invalid value for '{s}': '{s}'", .{ opt, text });
+}
+
+/// The arena is expected to outlive Options; it owns the option lists.
+pub fn parse(
+    a: std.mem.Allocator,
+    argv: []const [:0]const u8,
+    errw: *Io.Writer,
+) Error!Options {
+    var opts = Options{};
+    var only_operands = false;
+    var i: usize = 1;
+
+    while (i < argv.len) : (i += 1) {
+        const arg: []const u8 = argv[i];
+        if (only_operands) {
+            try opts.operands.append(a, arg);
+            continue;
+        }
+        if (eq(arg, "--")) {
+            only_operands = true;
+            continue;
+        }
+        if (arg.len > 2 and std.mem.startsWith(u8, arg, "--")) {
+            const body = arg[2..];
+            var key = body;
+            var inline_value: ?[]const u8 = null;
+            if (std.mem.indexOfScalar(u8, body, '=')) |p| {
+                key = body[0..p];
+                inline_value = body[p + 1 ..];
+            }
+
+            if (eq(key, "help")) {
+                opts.help = true;
+            } else if (eq(key, "version")) {
+                opts.version = true;
+            } else if (eq(key, "list-fonts")) {
+                opts.list_fonts = true;
+            } else if (eq(key, "font")) {
+                opts.font = try nextValue(inline_value, argv, &i, errw, "--font");
+                opts.font_explicit = true;
+            } else if (eq(key, "font-dir") or eq(key, "fontdir") or eq(key, "directory")) {
+                opts.font_dir = try nextValue(inline_value, argv, &i, errw, "--font-dir");
+            } else if (eq(key, "control")) {
+                try opts.controls.append(a, try nextValue(inline_value, argv, &i, errw, "--control"));
+            } else if (eq(key, "no-controls")) {
+                opts.controls.clearRetainingCapacity();
+            } else if (eq(key, "layout") or eq(key, "layoutmode")) {
+                const v = try nextValue(inline_value, argv, &i, errw, "--layout");
+                try opts.layout_ops.append(a, .{ .mode = try parseI32(errw, "--layout", v) });
+            } else if (eq(key, "kerning") or eq(key, "kern")) {
+                try opts.layout_ops.append(a, .kern);
+            } else if (eq(key, "full-width") or eq(key, "fullwidth")) {
+                try opts.layout_ops.append(a, .full_width);
+            } else if (eq(key, "force-smush") or eq(key, "smush")) {
+                try opts.layout_ops.append(a, .force_smush);
+            } else if (eq(key, "overflow") or eq(key, "overlap")) {
+                try opts.layout_ops.append(a, .overlap);
+            } else if (eq(key, "default-layout")) {
+                try opts.layout_ops.append(a, .font_default);
+            } else if (eq(key, "width")) {
+                const v = try nextValue(inline_value, argv, &i, errw, "--width");
+                const n = try parseUsize(errw, "--width", v);
+                // figlet ignores -w0 (only positive values change the width).
+                if (n > 0) {
+                    opts.width_value = n;
+                    opts.use_term_width = false;
+                }
+            } else if (eq(key, "term-width") or eq(key, "termwidth")) {
+                opts.use_term_width = true;
+            } else if (eq(key, "center") or eq(key, "centre")) {
+                opts.justify = .center;
+            } else if (eq(key, "left")) {
+                opts.justify = .left;
+            } else if (eq(key, "right")) {
+                opts.justify = .right;
+            } else if (eq(key, "default-justify")) {
+                opts.justify = null;
+            } else if (eq(key, "left-to-right")) {
+                opts.direction = .ltr;
+            } else if (eq(key, "right-to-left")) {
+                opts.direction = .rtl;
+            } else if (eq(key, "default-direction")) {
+                opts.direction = .auto;
+            } else if (eq(key, "paragraph")) {
+                opts.paragraph = true;
+            } else if (eq(key, "no-paragraph")) {
+                opts.paragraph = false;
+            } else if (eq(key, "german")) {
+                opts.german = true;
+            } else if (eq(key, "no-german")) {
+                opts.german = false;
+            } else if (eq(key, "file") or eq(key, "input-file") or eq(key, "input")) {
+                try opts.files.append(a, try nextValue(inline_value, argv, &i, errw, "--file"));
+            } else if (eq(key, "infocode")) {
+                const v = try nextValue(inline_value, argv, &i, errw, "--infocode");
+                opts.infocode = try parseI32(errw, "--infocode", v);
+            } else {
+                return invalid(errw, "unrecognized option '--{s}'", .{key});
+            }
+            continue;
+        }
+
+        if (arg.len >= 2 and arg[0] == '-' and arg[1] != '-') {
+            var j: usize = 1;
+            while (j < arg.len) : (j += 1) {
+                const ch = arg[j];
+                const attached: ?[]const u8 = if (j + 1 < arg.len) arg[j + 1 ..] else null;
+                switch (ch) {
+                    'h' => {
+                        opts.help = true;
+                    },
+                    'v' => opts.version = true,
+                    'A' => opts.cmd_input = true,
+                    'D' => opts.german = true,
+                    'E' => opts.german = false,
+                    'N' => opts.controls.clearRetainingCapacity(),
+                    'L' => opts.direction = .ltr,
+                    'R' => opts.direction = .rtl,
+                    'X' => opts.direction = .auto,
+                    'x' => opts.justify = null,
+                    'l' => opts.justify = .left,
+                    'c' => opts.justify = .center,
+                    'r' => opts.justify = .right,
+                    'p' => opts.paragraph = true,
+                    'n' => opts.paragraph = false,
+                    's' => try opts.layout_ops.append(a, .font_default),
+                    'k' => try opts.layout_ops.append(a, .kern),
+                    'W' => try opts.layout_ops.append(a, .full_width),
+                    'S' => try opts.layout_ops.append(a, .force_smush),
+                    'o' => try opts.layout_ops.append(a, .overlap),
+                    't' => opts.use_term_width = true,
+                    'f', 'd', 'C', 'm', 'w', 'I', 'i' => {
+                        const val = try nextValue(attached, argv, &i, errw, "-");
+                        switch (ch) {
+                            'f' => {
+                                opts.font = val;
+                                opts.font_explicit = true;
+                            },
+                            'd' => opts.font_dir = val,
+                            'C' => try opts.controls.append(a, val),
+                            'm' => try opts.layout_ops.append(a, .{ .mode = try parseI32(errw, "-m", val) }),
+                            'w' => {
+                                const n = try parseUsize(errw, "-w", val);
+                                if (n > 0) {
+                                    opts.width_value = n;
+                                    opts.use_term_width = false;
+                                }
+                            },
+                            'I' => opts.infocode = try parseI32(errw, "-I", val),
+                            'i' => try opts.files.append(a, val),
+                            else => unreachable,
+                        }
+                        break; // the rest of the cluster was the value
+                    },
+                    'F' => return invalid(errw, "the -F option was removed from FIGlet; use -f/--font (see figlist)", .{}),
+                    else => return invalid(errw, "invalid option -- '{c}'", .{ch}),
+                }
+            }
+            continue;
+        }
+
+        try opts.operands.append(a, arg);
+    }
+
+    if (opts.font.len == 0) return invalid(errw, "font name must not be empty", .{});
+    if (opts.files.items.len != 0 and opts.operands.items.len != 0) {
+        return invalid(errw, "--file cannot be combined with message arguments", .{});
+    }
+    return opts;
+}
+
+const testing = std.testing;
+
+fn parseArgs(a: std.mem.Allocator, list: []const [:0]const u8) !Options {
+    var buf: [4096]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    return parse(a, list, &w);
+}
+
+test "figlet options: justification, width order and message words" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const argv = [_][:0]const u8{ "ziglet", "-c", "-w", "40", "-t", "Hello", "world" };
+    const o = try parseArgs(a, &argv);
+    try testing.expectEqual(@import("textfig").font.Justify.center, o.justify.?);
+    try testing.expect(o.use_term_width);
+    try testing.expectEqual(@as(usize, 40), o.width_value.?);
+    try testing.expectEqual(@as(usize, 2), o.operands.items.len);
+}
+
+test "figlet options: clustered flags and layout order" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const argv = [_][:0]const u8{ "ziglet", "-ptk", "-m15", "-W", "-c" };
+    const o = try parseArgs(a, &argv);
+    try testing.expect(o.paragraph);
+    try testing.expectEqual(@as(usize, 3), o.layout_ops.items.len);
+    try testing.expectEqual(render.LayoutOp.kern, o.layout_ops.items[0]);
+    try testing.expectEqual(@as(i32, 15), o.layout_ops.items[1].mode);
+    try testing.expectEqual(render.LayoutOp.full_width, o.layout_ops.items[2]);
+
+    const combined = blk: {
+        var s: u32 = 143;
+        for (o.layout_ops.items) |op| s = render.applyLayoutOp(s, 143, op);
+        break :blk s;
+    };
+    try testing.expectEqual(@as(u32, 0), combined); // -W wins
+}
+
+test "figlet options: infocode, font, control and -N" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const argv = [_][:0]const u8{ "ziglet", "-f", "big.flf", "-C", "up", "-C", "down", "-N", "-C", "again", "-I3" };
+    const o = try parseArgs(a, &argv);
+    try testing.expectEqualStrings("big.flf", o.font);
+    try testing.expect(o.font_explicit);
+    try testing.expectEqual(@as(usize, 1), o.controls.items.len);
+    try testing.expectEqualStrings("again", o.controls.items[0]);
+    try testing.expectEqual(@as(i32, 3), o.infocode.?);
+}
+
+test "figlet options: unknown option is reported, not panicked" {
+    var buf: [512]u8 = undefined;
+    var w = Io.Writer.fixed(&buf);
+    const argv = [_][:0]const u8{ "ziglet", "-Z" };
+    try testing.expectError(error.InvalidArgs, parse(testing.allocator, &argv, &w));
+    try testing.expect(std.mem.indexOf(u8, w.buffer[0..w.end], "invalid option") != null);
+}

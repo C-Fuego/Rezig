@@ -1,0 +1,25 @@
+.{
+    .name = .ziglet,
+    .version = "1.0.0",
+    .fingerprint = 0x27874d015604e152,
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .textfig = .{
+            .path = "../../textfig/src",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        // The two *.bak files are reference copies of the pre-merge FIGlet
+        // front end; only the active sources are part of the package.
+        "src/main.zig",
+        "src/cli.zig",
+        "src/canvas.zig",
+        "src/filter.zig",
+        "src/color.zig",
+        "src/export.zig",
+        "tools",
+        "README.md",
+    },
+}
