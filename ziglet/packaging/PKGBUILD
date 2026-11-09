@@ -6,15 +6,15 @@ arch=('x86_64')
 url=""
 license=('MIT')
 depends=('zlib')
-makedepends=('zig')
+makedepends=('zig-master-bin')
 source=()
 sha256sums=()
 
 build() {
-  # 还原 Rezig/{zfiglet|ztoilet,textfig}/src 的相对布局，路径依赖 ../../textfig/src 才能成立
-  mkdir -p "$srcdir/tree/Rezig/ziglet/src" "$srcdir/tree/Rezig/textfig/src"
-  cp -a "$startdir/../src/." "$srcdir/tree/Rezig/ziglet/src/"
-  cp -a "$startdir/../../textfig/src/." "$srcdir/tree/Rezig/textfig/src/"
+  # textfig 现在就在 ziglet/src/textfig 里，整棵树拷过去即可
+  rm -rf "$srcdir/tree"
+  mkdir -p "$srcdir/tree/Rezig/ziglet"
+  cp -a "$startdir/../src" "$srcdir/tree/Rezig/ziglet/src"
   cd "$srcdir/tree/Rezig/ziglet/src"
   ZIG_GLOBAL_CACHE_DIR="$srcdir/.zig-global" zig build -Doptimize=ReleaseFast \
     --prefix "$srcdir/out" --cache-dir "$srcdir/.zig-cache"
@@ -28,7 +28,7 @@ package() {
   install -Dm644 "$srcdir/tree/Rezig/ziglet/src/README.md" "$pkgdir/usr/share/doc/ziglet/README.md"
   # 随包带一份 FIGlet/TOIlet 字体，系统没装 figlet/toilet 也能直接用
   install -d "$pkgdir/usr/share/ziglet/fonts"
-  find "$srcdir/tree/Rezig/textfig/src/fonts" -maxdepth 1 -type f \
+  find "$srcdir/tree/Rezig/ziglet/src/textfig/fonts" -maxdepth 1 -type f \
     \( -name '*.flf' -o -name '*.flc' -o -name '*.tlf' \) \
     -exec cp {} "$pkgdir/usr/share/ziglet/fonts/" \;
 }

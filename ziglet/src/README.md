@@ -12,7 +12,7 @@ colours, filters and export formats on top:
   run in order, and the result is written in the selected export format.
 
 Fonts are FIGlet `.flf` and TOIlet `.tlf` files; `.gz`/`.zip` containers work
-through the system zlib. Rendering comes from the [`textfig`](../textfig)
+through the system zlib. Rendering comes from the [`textfig`](textfig/)
 library: no libcaca, no third-party packages.
 
 ```sh
@@ -22,7 +22,7 @@ printf 'Hi' | ./zig-out/bin/ziglet
 ./zig-out/bin/ziglet -F flip Hi
 ./zig-out/bin/ziglet --export irc -F rainbow Hi
 ./zig-out/bin/ziglet -m 0 -w 60 -c text
-./zig-out/bin/ziglet -d ../../textfig/src/fonts -C 646-de text
+./zig-out/bin/ziglet -d textfig/fonts -C 646-de text
 ```
 
 ## Merged option set
@@ -161,10 +161,10 @@ paragraph (`-p`) and German (`-D`) rules are applied before rendering.
 | `zchkfont` | Validate font files and report header, height, width, endmark and character-block problems with line numbers. |
 
 ```sh
-./zig-out/bin/zfiglist -d ../../textfig/src/fonts
+./zig-out/bin/zfiglist -d textfig/fonts
 ./zig-out/bin/zshowfigfonts --brief
 ./zig-out/bin/zshowfigfonts -f slant "Hello world"
-./zig-out/bin/zchkfont ../../textfig/src/fonts/standard.flf
+./zig-out/bin/zchkfont textfig/fonts/standard.flf
 ```
 
 `zfiglist` follows figlist's output shape (`Default font`, `Font directory`,

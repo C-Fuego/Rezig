@@ -4,17 +4,22 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const textfig_dep = b.dependency("textfig", .{
+    // textfig lives in textfig/src right here, so it is just another module
+    // in this build instead of a package dependency.
+    const textfig_mod = b.createModule(.{
+        .root_source_file = b.path("textfig/src/textfig.zig"),
         .target = target,
         .optimize = optimize,
     });
+    textfig_mod.linkSystemLibrary("z", .{});
+    textfig_mod.link_libc = true;
 
     const mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "textfig", .module = textfig_dep.module("textfig") },
+            .{ .name = "textfig", .module = textfig_mod },
         },
     });
 
@@ -48,7 +53,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "textfig", .module = textfig_dep.module("textfig") },
+                .{ .name = "textfig", .module = textfig_mod },
             },
         });
         tool_mod.linkSystemLibrary("z", .{});
@@ -68,4 +73,7 @@ pub fn build(b: *std.Build) void {
     const unit_tests = b.addTest(.{ .root_module = mod });
     const run_tests = b.addRunArtifact(unit_tests);
     test_step.dependOn(&run_tests.step);
+
+    const textfig_tests = b.addTest(.{ .root_module = textfig_mod });
+    test_step.dependOn(&b.addRunArtifact(textfig_tests).step);
 }

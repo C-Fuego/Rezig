@@ -3,11 +3,6 @@
     .version = "1.0.0",
     .fingerprint = 0x27874d015604e152,
     .minimum_zig_version = "0.17.0",
-    .dependencies = .{
-        .textfig = .{
-            .path = "../../textfig/src",
-        },
-    },
     .paths = .{
         "build.zig",
         "build.zig.zon",
@@ -20,6 +15,7 @@
         "src/color.zig",
         "src/export.zig",
         "tools",
+        "textfig",
         "README.md",
     },
 }
