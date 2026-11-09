@@ -14401,6 +14401,28 @@
     },
     "forms": []
   },
+{
+  "idx": 670,
+  "slug": "floette-eternal",
+  "gen": 6,
+  "name": {
+    "en": "Eternal Flower Floette",
+    "ja": "\u30a8\u30bf\u30fc\u30ca\u30eb\u30d5\u30e9\u30a8\u30c3\u30c6",
+    "fr": "Floette",
+    "de": "Floette",
+    "zh_hans": "\u6c38\u6052\u82b1\u53f6\u8482",
+    "zh_hant": "\u6c38\u6046\u82b1\u8449\u8482"
+  },
+  "desc": {
+    "en": "It gives its own power to flowers, pouring its\nheart into caring for them. Floette never forgives\nanyone who messes up a flower bed.",
+    "fr": "Il fait profiter ses fleurs de ses pouvoirs et met\ntout son c\u0153ur \u00e0 leur entretien. Gare \u00e0 ceux qui\nravagent ses plates-bandes\u202f!",
+    "de": "Es \u00fcbertr\u00e4gt seine Kraft auf Blumen und pflegt\ndiese mit ganzem Herzen. Es verzeiht keinem,\nder sein Blumenbeet verw\u00fcstet.",
+    "ja": "\u81ea\u5206\u306e\u3000\u30d1\u30ef\u30fc\u3092\u3000\u82b1\u306b\u3000\u4e0e\u3048\n\u5fc3\u3092\u3000\u3053\u3081\u3066\u3000\u4e16\u8a71\u3092\u3000\u3059\u308b\u3002\n\u82b1\u58c7\u3092\u3000\u8352\u3089\u3059\u3082\u306e\u306f\u3000\u8a31\u3055\u306a\u3044\u3002",
+    "zh_hans": "\u628a\u81ea\u5df1\u7684\u529b\u91cf\u7ed9\u82b1\uff0c\u7528\u5fc3\u5730\u7167\u6599\u3002\n\u7edd\u4e0d\u539f\u8c05\u90a3\u4e9b\u7834\u574f\u82b1\u575b\u8005\u3002",
+    "zh_hant": "\u6703\u628a\u81ea\u5df1\u7684\u529b\u91cf\u5206\u7d66\u82b1\uff0c\n\u7528\u5fc3\u5730\u52a0\u4ee5\u7167\u6599\u3002\n\u7d55\u4e0d\u6703\u539f\u8ad2\u7834\u58de\u82b1\u58c7\u7684\u50a2\u4f19\u3002"
+  },
+  "forms": []
+},
   {
     "idx": 671,
     "slug": "florges",
