@@ -101,8 +101,22 @@ pub const Database = struct {
                 return ctx.die("Out of memory", .{});
         const fetched = assets.get(ctx.io, ctx.arena, art_path) catch |err|
             return ctx.die("Failed to unpack pokemon art from '{s}': {t}", .{ art_path, err });
-        const art = fetched orelse
-            return ctx.die("Could not read pokemon art from '{s}'", .{art_path});
+        const art = fetched orelse blk: {
+            // The newer form art only exists in its regular colours, so a shiny
+            // request falls back to it instead of failing.
+            if (!request.common.shiny) {
+                return ctx.die("Could not read pokemon art from '{s}'", .{art_path});
+            }
+            const fallback = if (is_regular)
+                std.fmt.bufPrint(&ctx.buffer, "colorscripts/regular/{s}", .{self.slugAt(found)}) catch
+                    return ctx.die("Out of memory", .{})
+            else
+                std.fmt.bufPrint(&ctx.buffer, "colorscripts/regular/{s}-{s}", .{ self.slugAt(found), request.form }) catch
+                    return ctx.die("Out of memory", .{});
+            const retry = assets.get(ctx.io, ctx.arena, fallback) catch |err|
+                return ctx.die("Failed to unpack pokemon art from '{s}': {t}", .{ fallback, err });
+            break :blk retry orelse return ctx.die("Could not read pokemon art from '{s}'", .{fallback});
+        };
 
         const padding = ctx.arena.alloc(u8, request.common.padding_left) catch
             return ctx.die("Out of memory", .{});
