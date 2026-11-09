@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 为 zfiglet / ztoilet / zfetch 打包；前两个把 textfig 一起塞进 tarball
+# 为 zfetch 打包；ziglet 用自己 packaging/PKGBUILD（要带字体和三个小工具）
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")" && pwd)"
@@ -49,8 +49,6 @@ EOF
 
 ver_of() { grep -m1 '\.version' "$1/build.zig.zon" | sed 's/.*"\(.*\)".*/\1/'; }
 
-build_pkg zfiglet "$(ver_of "$root/zfiglet")" "FIGlet clone written in Zig (zfiglet)" zfiglet zfiglet textfig
-build_pkg ztoilet "$(ver_of "$root/ztoilet")" "TOIlet clone written in Zig (ztoilet)" ztoilet ztoilet textfig
 
 # zfetch 在 workspace 下，tarball 里放同名目录
 if [ ! -e "$out/zfetch"/*.pkg.tar.zst ] 2>/dev/null; then :; fi
