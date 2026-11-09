@@ -146,7 +146,7 @@ fn parseList(ctx: *app.Ctx, args: *Args) app.Fail!Parsed {
         generations = arg;
     }
 
-    const parsed = try parseGenerationsArg(ctx, generations orelse "1-9", "[GENERATIONS]");
+    const parsed = try parseGenerationsArg(ctx, generations orelse "1-10", "[GENERATIONS]");
     return .{ .command = .{ .list = parsed } };
 }
 
@@ -332,7 +332,7 @@ fn parseRandom(ctx: *app.Ctx, args: *Args) app.Fail!Parsed {
         generations = arg;
     }
 
-    random.generations = try parseGenerationsArg(ctx, generations orelse "1-9", "[GENERATIONS]");
+    random.generations = try parseGenerationsArg(ctx, generations orelse "1-10", "[GENERATIONS]");
     return .{ .command = .{ .random = random } };
 }
 
@@ -483,7 +483,7 @@ fn parseGenerationsArg(ctx: *app.Ctx, value: []const u8, label: []const u8) app.
         ctx.err.write("' for '");
         ctx.err.bold(label);
         ctx.err.print(
-            "': Invalid generations `{s}`, should be an integer, a comma-separated list, or a range of integers between 1 and 9\n",
+            "': Invalid generations `{s}`, should be an integer, a comma-separated list, or a range of integers between 1 and 10\n",
             .{value},
         );
         moreInfo(&ctx.err);

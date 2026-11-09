@@ -45,7 +45,7 @@ pub const Generations = struct {
     }
 
     fn set(self: *Generations, gen: u8) void {
-        if (gen < 1 or gen > 9) {
+        if (gen < 1 or gen > 10) {
             self.bad = true;
             return;
         }
@@ -53,7 +53,7 @@ pub const Generations = struct {
     }
 
     pub fn contains(self: Generations, gen: u8) bool {
-        if (gen < 1 or gen > 9) return false;
+        if (gen < 1 or gen > 10) return false;
         return self.mask & (@as(u16, 1) << @intCast(gen)) != 0;
     }
 };

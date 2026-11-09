@@ -8,9 +8,9 @@ pub const Page = enum { top, list, name, random, help };
 
 const name_description = "Select pokemon by name. Generally spelled like in the games. A few exceptions are nidoran-f, nidoran-m, mr-mime, farfetchd, flabebe type-null etc. Perhaps grep the output of list if in doubt";
 
-const random_description = "Show a random pokemon. This command can optionally be followed by a generation number or range (1-9) to show random pokemon from a specific generation or range of generations. The generations can be provided as a continuous range (eg. 1-3) or as a list of generations (1,3,6)";
+const random_description = "Show a random pokemon. This command can optionally be followed by a generation number or range (1-10) to show random pokemon from a specific generation or range of generations. The generations can be provided as a continuous range (eg. 1-3) or as a list of generations (1,3,6)";
 
-const generations_description = "[GENERATIONS]  Generation number, range (1-9), or list of generations (1,3,6) [default: 1-9]";
+const generations_description = "[GENERATIONS]  Generation number, range (1-10), or list of generations (1,3,6) [default: 1-10]";
 
 const top_text = "Print pokemon sprites in your terminal\n" ++
     "\n" ++
