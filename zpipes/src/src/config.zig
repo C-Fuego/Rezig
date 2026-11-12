@@ -35,7 +35,8 @@ pub const Config = struct {
     max_length: u32 = 0,
     max_total_length: u32 = 0,
     turn_chance: f32 = 0.15,
-    reset_threshold: f32 = 0.5,
+    /// 累计写入字符数达到该值后清屏重画（对应 pipes.sh 的 -r，0 = 不重置）
+    reset_chars: u32 = 2000,
 };
 
 pub fn configFail(path: []const u8, line: usize, comptime fmt: []const u8, args: anytype) error{InvalidConfig} {
@@ -211,7 +212,7 @@ pub fn parseToml(cfg: *Config, text: []const u8, path: []const u8) error{Invalid
         } else if (keyIs(key, "turn")) {
             cfg.turn_chance = try parseFractionValue(path, line_no, key, value, 0.0);
         } else if (keyIs(key, "reset")) {
-            cfg.reset_threshold = try parseFractionValue(path, line_no, key, value, 0.1);
+            cfg.reset_chars = try parseU32Value(path, line_no, key, value, 0, 10_000_000);
         } else {
             return configFail(path, line_no, "unknown key '{s}'", .{key});
         }
@@ -229,7 +230,7 @@ test "TOML 解析 key = value、注释、section 和类型" {
         \\max_length = 9
         \\max_total_length = 20
         \\turn = 0.25
-        \\reset = 0.5
+        \\reset = 2000
         \\[colors]
         \\color_mode = "rgb"
         \\theme = "pastel"
@@ -250,7 +251,7 @@ test "TOML 解析 key = value、注释、section 和类型" {
     try std.testing.expectEqual(@as(u32, 9), cfg.max_length);
     try std.testing.expectEqual(@as(u32, 20), cfg.max_total_length);
     try std.testing.expectApproxEqAbs(@as(f32, 0.25), cfg.turn_chance, 0.001);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.5), cfg.reset_threshold, 0.001);
+    try std.testing.expectEqual(@as(u32, 2000), cfg.reset_chars);
     try std.testing.expectEqual(palette.ColorMode.rgb, cfg.colors.color_mode);
     try std.testing.expectEqual(palette.Theme.pastel, cfg.colors.theme);
     try std.testing.expectEqual(palette.Mode.c256, cfg.colors.palette);

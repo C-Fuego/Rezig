@@ -115,51 +115,49 @@ pub const Pipe = struct {
         const cols: i32 = @intCast(g.cols);
         const rows: i32 = @intCast(g.rows);
 
-        var attempt: usize = 0;
-        while (attempt < 128) : (attempt += 1) {
-            const dir: Dir = switch (rng.uintLessThan(u8, 4)) {
-                0 => .up,
-                1 => .down,
-                2 => .left,
-                else => .right,
-            };
+        // pipes.sh 的出生方式：随机选一条边和一个方向，不管目标格是否已被占用
+        // （初始化里 v[i] = V[RANDOM*VN/M]，之后每轮从边缘进一格），因此这里
+        // 不做 isFree 检查，也永远不会因为"找不到空位"而 spawn 失败。
+        const dir: Dir = switch (rng.uintLessThan(u8, 4)) {
+            0 => .up,
+            1 => .down,
+            2 => .left,
+            else => .right,
+        };
 
-            var x: i32 = 0;
-            var y: i32 = 0;
-            switch (dir) {
-                .up => {
-                    x = rng.intRangeAtMost(i32, 0, cols - 1);
-                    y = rows - 1;
-                },
-                .down => {
-                    x = rng.intRangeAtMost(i32, 0, cols - 1);
-                    y = 0;
-                },
-                .left => {
-                    x = cols - 1;
-                    y = rng.intRangeAtMost(i32, 0, rows - 1);
-                },
-                .right => {
-                    x = 0;
-                    y = rng.intRangeAtMost(i32, 0, rows - 1);
-                },
-            }
-
-            if (!g.isFree(x, y)) continue;
-            g.setGlyph(@intCast(x), @intCast(y), straightGlyph(kind, dir), color);
-
-            return .{
-                .x = x,
-                .y = y,
-                .prev_dir = dir,
-                .dir = dir,
-                .kind = kind,
-                .color = color,
-                .alive = true,
-                .length = 1,
-            };
+        var x: i32 = 0;
+        var y: i32 = 0;
+        switch (dir) {
+            .up => {
+                x = rng.intRangeAtMost(i32, 0, cols - 1);
+                y = rows - 1;
+            },
+            .down => {
+                x = rng.intRangeAtMost(i32, 0, cols - 1);
+                y = 0;
+            },
+            .left => {
+                x = cols - 1;
+                y = rng.intRangeAtMost(i32, 0, rows - 1);
+            },
+            .right => {
+                x = 0;
+                y = rng.intRangeAtMost(i32, 0, rows - 1);
+            },
         }
-        return null;
+
+        g.setGlyph(@intCast(x), @intCast(y), straightGlyph(kind, dir), color);
+
+        return .{
+            .x = x,
+            .y = y,
+            .prev_dir = dir,
+            .dir = dir,
+            .kind = kind,
+            .color = color,
+            .alive = true,
+            .length = 1,
+        };
     }
 
     pub fn spawn(
@@ -210,10 +208,15 @@ pub const Pipe = struct {
             .right => nx += 1,
         }
 
-        if (!g.isFree(nx, ny)) {
-            self.alive = false;
-            return;
-        }
+        // pipes.sh 的行为：管道之间互相覆盖、永不因为"格子被占"而停下，
+        // 每帧每条管道必然写出一个字符。因此这里不再因碰撞而死亡。
+        //
+        // 到边缘时环绕（pipes.sh 的 x = (x + w) % w, y = (y + h) % h），
+        // 否则坐标会一路跑出网格，setGlyph 越界后画面就再也画不出东西了。
+        const cols: i32 = @intCast(g.cols);
+        const rows: i32 = @intCast(g.rows);
+        nx = @mod(nx, cols);
+        ny = @mod(ny, rows);
 
         self.prev_dir = next_dir;
         self.dir = next_dir;
@@ -271,12 +274,43 @@ test "管道不会走进已占用的格子" {
     var prng = std.Random.DefaultPrng.init(123);
     p.step(&g, prng.random(), 0.0, 0);
 
-    try std.testing.expect(!p.alive);
-    try std.testing.expectEqual(@as(i32, 2), p.x);
+    // pipes.sh 语义：管道互相覆盖、永不因碰撞停下，每轮必定前进一格。
+    try std.testing.expect(p.alive);
+    try std.testing.expectEqual(@as(i32, 3), p.x);
     try std.testing.expectEqual(@as(i32, 2), p.y);
+    try std.testing.expectEqual(@as(u32, 2), p.length);
 }
 
-test "网格占满时 spawn 返回 null" {
+test "到达边缘时按 pipes.sh 的方式环绕" {
+    const allocator = std.testing.allocator;
+    var g = try grid.Grid.init(allocator, 5, 5);
+    defer g.deinit();
+
+    var p = Pipe{
+        .x = 4,
+        .y = 4,
+        .prev_dir = .right,
+        .dir = .right,
+        .kind = .heavy,
+        .color = .{ .kind = .ansi, .index = 2 },
+        .alive = true,
+        .length = 1,
+    };
+    var prng = std.Random.DefaultPrng.init(7);
+    p.step(&g, prng.random(), 0.0, 0);
+    // x: 4 + 1 -> 5 % 5 = 0；y 不变
+    try std.testing.expect(p.alive);
+    try std.testing.expectEqual(@as(i32, 0), p.x);
+    try std.testing.expectEqual(@as(i32, 4), p.y);
+
+    p.dir = .down;
+    p.prev_dir = .down;
+    p.step(&g, prng.random(), 0.0, 0);
+    // y: 4 + 1 -> 5 % 5 = 0
+    try std.testing.expectEqual(@as(i32, 0), p.y);
+}
+
+test "网格占满时依然能 spawn（pipes.sh 不看占用）" {
     const allocator = std.testing.allocator;
     var g = try grid.Grid.init(allocator, 3, 3);
     defer g.deinit();
@@ -292,7 +326,10 @@ test "网格占满时 spawn 返回 null" {
     var colors = palette.Colors{};
     var prng = std.Random.DefaultPrng.init(123);
     const kinds = [_]Kind{.heavy};
-    try std.testing.expect(Pipe.spawn(&g, prng.random(), &colors, &kinds) == null);
+    // pipes.sh 从随机边缘出生，不与已占用格子冲突，因此永远能 spawn 成功。
+    const np = Pipe.spawn(&g, prng.random(), &colors, &kinds);
+    try std.testing.expect(np != null);
+    try std.testing.expect(np.?.alive);
 }
 
 test "inherit-style 真正继承 kind 和 color" {

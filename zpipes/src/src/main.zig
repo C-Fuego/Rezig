@@ -1,6 +1,6 @@
 const std = @import("std");
 const posix = std.posix;
-const linux = std.os.linux;
+const sys = @import("xsys.zig");
 const term = @import("term.zig");
 const grid = @import("grid.zig");
 const pipe = @import("pipe.zig");
@@ -25,7 +25,8 @@ const help_text =
     \\  -C                    no color (same as --color-mode none)
     \\  -f [0-]               framerate, 0 = unlimited (D=50)
     \\  -s [1-]               cells per growth step (D=1)
-    \\  -r [0.1-1.0]          reset when the screen is this full (D=0.5)
+    \\  -r [0-]                clear the screen after this many characters (D=2000,
+    \\                        0 = never; same meaning as pipes.sh -r)
     \\  -t [0.0-1.0]          turn chance (D=0.15)
     \\  -i                    keep pipe color and type when it respawns
     \\  -h                    print this help message
@@ -279,11 +280,7 @@ fn parseArgs(args: std.process.Args, cfg: *config.Config) !void {
             .max_length => cfg.max_length = try parseU32("--max-length", value, 0, 1_000_000),
             .max_total_length => cfg.max_total_length = try parseU32("--max-total-length", value, 0, 1_000_000),
             .turn => cfg.turn_chance = try parseFraction("--turn", value),
-            .reset => {
-                const v = try parseFraction("--reset", value);
-                if (v < 0.1) return fail("value for --reset must be between 0.1 and 1.0", .{});
-                cfg.reset_threshold = v;
-            },
+            .reset => cfg.reset_chars = try parseU32("--reset", value, 0, 10_000_000),
             .kind => try parseKindList(cfg, value),
             .help, .version, .license, .no_color, .bold, .inherit => unreachable,
         }
@@ -333,7 +330,7 @@ fn readConfigFile(allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
         error.FileNotFound => return null,
         else => return err,
     };
-    defer _ = linux.close(fd);
+    defer _ = sys.close(fd);
 
     var list: std.ArrayList(u8) = .empty;
     errdefer list.deinit(allocator);
@@ -416,6 +413,7 @@ fn run(cfg: *const config.Config) !void {
     var next_frame = term.nowNs();
     var frame_count: usize = 0;
     var reset_requested = false;
+    var round: u64 = 0; // pipes.sh 的 t：已跑轮数
 
     while (true) {
         if (term.quit_pending.load(.monotonic)) break;
@@ -493,7 +491,11 @@ fn run(cfg: *const config.Config) !void {
             enforceTotalLimit(pipes, cfg.max_total_length);
         }
 
-        if (g.occupancy() >= cfg.reset_threshold) {
+        // 与 pipes.sh 的计数语义严格一致：主循环每跑一轮、每条管道写 1 个字符，
+        // 计数写成 t * p（t = 已跑轮数，p = 管道数），并且只要还没达到阈值就 t++。
+        // pipes.sh 原文：((r > 0 && t * p >= r)) && tput reset && tput civis && t=0 || ((t++))
+        if (cfg.reset_chars > 0 and round * @as(u64, @intCast(cfg.pipe_count)) >= cfg.reset_chars) {
+            round = 0;
             g.clearAll();
             for (pipes) |*p| {
                 p.* = .{};
@@ -504,7 +506,11 @@ fn run(cfg: *const config.Config) !void {
                 }
             }
             enforceTotalLimit(pipes, cfg.max_total_length);
-            try frame.appendSlice(allocator, "\x1b[2J");
+            // tput reset + civis 的等价物：清屏、归位、重新隐藏光标
+            try term.writeAll(posix.STDOUT_FILENO, "\x1b[0m\x1b[2J\x1b[H\x1b[?25l");
+            continue;
+        } else {
+            round +%= 1;
         }
 
         try g.renderDirty(allocator, &frame);
@@ -526,9 +532,9 @@ fn run(cfg: *const config.Config) !void {
 }
 
 fn makeSeed() u64 {
-    var ts: std.os.linux.timespec = undefined;
-    const rc = std.os.linux.clock_gettime(.REALTIME, &ts);
-    if (std.os.linux.errno(rc) != .SUCCESS) return 0x9e3779b97f4a7c15;
+    var ts: std.posix.timespec = undefined;
+    const rc = sys.clock_gettime(sys.CLOCK.REALTIME, &ts);
+    if (sys.errno(rc) != .SUCCESS) return 0x9e3779b97f4a7c15;
     const sec: u64 = @intCast(ts.sec);
     const nsec: u64 = @intCast(ts.nsec);
     return sec *% 1_000_000_000 +% nsec;
