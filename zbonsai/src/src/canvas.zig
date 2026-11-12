@@ -5,6 +5,7 @@
 //! against the previously emitted frame and only sends the changed runs, which
 //! is what ncurses' `doupdate()` did for the original.
 const std = @import("std");
+const sys = @import("xsys.zig");
 const term = @import("term.zig");
 
 pub const Allocator = std.mem.Allocator;
@@ -365,8 +366,8 @@ fn drainPipe(fd: term.fd_t) []u8 {
     while (true) {
         // The write end stays open, so only read what is actually buffered.
         if (!term.pollInput(fd, 0)) break;
-        const r = std.os.linux.read(fd, &buf, buf.len);
-        if (std.os.linux.errno(r) != .SUCCESS or r == 0) break;
+        const r = sys.read(fd, &buf, buf.len);
+        if (sys.errno(r) != .SUCCESS or r == 0) break;
         out.appendSlice(gpa, buf[0..r]) catch break;
     }
     return out.toOwnedSlice(gpa) catch &.{};
@@ -378,12 +379,12 @@ test "renderer emits the frame and then only the diff" {
     defer c.deinit();
 
     var fds: [2]term.fd_t = undefined;
-    if (std.os.linux.errno(std.os.linux.pipe2(&fds, .{ .CLOEXEC = true })) != .SUCCESS) {
+    if (sys.errno(sys.pipe(&fds)) != .SUCCESS) {
         return error.SkipZigTest;
     }
     defer {
-        _ = std.os.linux.close(fds[0]);
-        _ = std.os.linux.close(fds[1]);
+        _ = sys.close(fds[0]);
+        _ = sys.close(fds[1]);
     }
 
     var out = term.Out.init(fds[1]);

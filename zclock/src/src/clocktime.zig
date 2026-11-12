@@ -1,7 +1,7 @@
 //! 时间计算：unix 秒 → 公历（无 libc 的 localtime），12/24 小时制，
 //! 以及 tty-clock 用到的 strftime 子集。全部纯函数，方便单测。
 const std = @import("std");
-const linux = std.os.linux;
+const sys = @import("xsys.zig");
 
 pub const Civil = struct {
     year: i32 = 1970,
@@ -19,8 +19,8 @@ pub const Civil = struct {
 
 /// CLOCK_REALTIME → unix 秒。std.time.timestamp 在 0.17 已删除。
 pub fn nowUnix() i64 {
-    var ts: linux.timespec = undefined;
-    const rc = linux.clock_gettime(.REALTIME, &ts);
+    var ts: std.posix.timespec = undefined;
+    const rc = sys.clock_gettime(sys.CLOCK.REALTIME, &ts);
     if (rc != 0) return 0;
     return @intCast(ts.sec);
 }

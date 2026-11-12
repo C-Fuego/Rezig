@@ -18,6 +18,7 @@ const canvas = @import("canvas.zig");
 const message = @import("message.zig");
 const term = @import("term.zig");
 const tree = @import("tree.zig");
+const sys = @import("xsys.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -310,7 +311,7 @@ const App = struct {
         const now = std.Io.Clock.real.now(self.io);
         const ns: i96 = now.nanoseconds;
         var x: u64 = @truncate(@as(u96, @bitCast(ns)));
-        const pid: u64 = @intCast(std.os.linux.getpid());
+        const pid: u64 = @intCast(sys.getpid());
         x ^= pid *% 0x9E3779B97F4A7C15;
         x ^= self.tree_count *% 0x2545F4914F6CDD1D;
         // splitmix64 finalizer: cheap avalanche, no /dev/urandom needed.

@@ -9,6 +9,7 @@ const clocktime = @import("clocktime.zig");
 const font = @import("font.zig");
 const render = @import("render.zig");
 const term = @import("term.zig");
+const sys = @import("xsys.zig");
 const tz = @import("tz.zig");
 
 pub const VERSION = "1.0.0";
@@ -531,7 +532,7 @@ pub fn main(init: std.process.Init) !void {
         in_fd = fd;
     }
     defer {
-        if (own_tty) |fd| _ = std.os.linux.close(fd);
+        if (own_tty) |fd| _ = sys.close(fd);
     }
 
     var out_buf: [64 * 1024]u8 = undefined;

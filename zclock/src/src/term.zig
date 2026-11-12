@@ -1,8 +1,8 @@
-//! 终端底层：只用 std.os.linux 的裸系统调用（0.17 里 std.fs 变成 std.Io，
-//! std.posix.write / std.time.* 都没了），外加几个信号标志。
+//! 终端底层：系统调用经 xsys.zig 垫片发出（Linux 上是裸 syscall，macOS 等走 libc），
+//! 外加几个信号标志。
 const std = @import("std");
 const posix = std.posix;
-const linux = std.os.linux;
+const sys = @import("xsys.zig");
 
 pub const STDOUT = posix.STDOUT_FILENO;
 pub const STDIN = posix.STDIN_FILENO;
@@ -18,20 +18,20 @@ pub const CLEAR_SCREEN = "\x1b[2J";
 pub const Size = struct { cols: i32, rows: i32 };
 pub const DEFAULT_SIZE = Size{ .cols = 80, .rows = 24 };
 
-const TIOCGWINSZ: u32 = 0x5413;
-const TCGETS: u32 = 0x5401;
+const TIOCGWINSZ: u32 = sys.ioctl_req.TIOCGWINSZ;
+const TCGETS: u32 = sys.ioctl_req.TCGETS;
 
 /// 系统调用返回 usize，负数按 -errno 编码（0.17 没有 std.posix 的错误装饰了）。
-pub fn errnoOf(rc: usize) ?linux.E {
-    const signed: isize = @bitCast(rc);
-    if (signed >= 0) return null;
-    return @enumFromInt(@as(u16, @intCast(-signed)));
+pub fn errnoOf(rc: usize) ?sys.Err {
+    const e = sys.errno(rc);
+    if (e == .SUCCESS) return null;
+    return e;
 }
 
 pub fn writeAll(fd: posix.fd_t, bytes: []const u8) error{WriteFailed}!void {
     var off: usize = 0;
     while (off < bytes.len) {
-        const rc = linux.write(fd, bytes.ptr + off, bytes.len - off);
+        const rc = sys.write(fd, bytes.ptr + off, bytes.len - off);
         if (errnoOf(rc)) |e| {
             switch (e) {
                 .INTR, .AGAIN => continue,
@@ -51,7 +51,7 @@ pub const ReadResult = union(enum) {
 
 pub fn readSome(fd: posix.fd_t, buf: []u8) ReadResult {
     if (buf.len == 0) return .retry;
-    const rc = linux.read(fd, buf.ptr, buf.len);
+    const rc = sys.read(fd, buf.ptr, buf.len);
     if (errnoOf(rc)) |e| {
         switch (e) {
             .INTR, .AGAIN => return .retry,
@@ -64,7 +64,7 @@ pub fn readSome(fd: posix.fd_t, buf: []u8) ReadResult {
 
 pub fn getSize(fd: posix.fd_t) Size {
     var ws: posix.winsize = .{ .row = 0, .col = 0, .xpixel = 0, .ypixel = 0 };
-    const rc = linux.ioctl(fd, TIOCGWINSZ, @intFromPtr(&ws));
+    const rc = sys.ioctl(fd, TIOCGWINSZ, @intFromPtr(&ws));
     if (errnoOf(rc) != null) return DEFAULT_SIZE;
     if (ws.col == 0 or ws.row == 0) return DEFAULT_SIZE;
     return .{ .cols = @intCast(ws.col), .rows = @intCast(ws.row) };
@@ -76,35 +76,35 @@ pub fn getSize(fd: posix.fd_t) Size {
 pub fn isTty(fd: posix.fd_t) bool {
     if (fd < 0) return false;
     var buf: [128]u8 = undefined;
-    const rc = linux.ioctl(fd, TCGETS, @intFromPtr(&buf));
+    const rc = sys.ioctl(fd, TCGETS, @intFromPtr(&buf));
     return errnoOf(rc) == null;
 }
 
 pub const OpenResult = union(enum) {
     fd: posix.fd_t,
-    err: linux.E,
+    err: sys.Err,
 };
 
 /// 以读写打开（对应原版 fopen(tty, "r+")）。
 pub fn openRdwr(path: [:0]const u8) OpenResult {
-    const flags = linux.O{ .ACCMODE = .RDWR, .CLOEXEC = true };
-    const rc = linux.openat(linux.AT.FDCWD, path.ptr, flags, 0);
+    const flags = posix.O{ .ACCMODE = .RDWR, .CLOEXEC = true };
+    const rc = sys.openat(posix.AT.FDCWD, path.ptr, flags, 0);
     if (errnoOf(rc)) |e| return .{ .err = e };
     return .{ .fd = @intCast(rc) };
 }
 
 /// 整文件读入（时区数据库文件用），上限 max 字节。
 pub fn readFileAlloc(alloc: std.mem.Allocator, path: [:0]const u8, max: usize) ?[]u8 {
-    const flags = linux.O{ .ACCMODE = .RDONLY, .CLOEXEC = true };
-    const rc = linux.openat(linux.AT.FDCWD, path.ptr, flags, 0);
+    const flags = posix.O{ .ACCMODE = .RDONLY, .CLOEXEC = true };
+    const rc = sys.openat(posix.AT.FDCWD, path.ptr, flags, 0);
     if (errnoOf(rc)) |_| return null;
     const fd: posix.fd_t = @intCast(rc);
-    defer _ = linux.close(fd);
+    defer _ = sys.close(fd);
 
     var list: std.ArrayList(u8) = .empty;
     var chunk: [4096]u8 = undefined;
     while (list.items.len < max) {
-        const n = linux.read(fd, &chunk, chunk.len);
+        const n = sys.read(fd, &chunk, chunk.len);
         if (errnoOf(n)) |e| {
             if (e == .INTR) continue;
             break;
@@ -143,13 +143,13 @@ pub const Cbreak = struct {
 /// 等 fd 可读，超时用 timespec（原版就是 pselect(delay, nsdelay)）。
 pub fn waitReadable(fd: posix.fd_t, timeout: ?*const posix.timespec) bool {
     var fds = [_]posix.pollfd{.{ .fd = fd, .events = posix.POLL.IN, .revents = 0 }};
-    _ = posix.ppoll(&fds, timeout, null) catch return false;
+    _ = sys.ppoll(&fds, timeout, null);
     return fds[0].revents != 0;
 }
 
 /// 纯睡眠（原版 pselect 的 delay 部分）。
 pub fn sleepFor(timeout: ?*const posix.timespec) void {
-    _ = posix.ppoll(&.{}, timeout, null) catch {};
+    _ = sys.ppoll(&.{}, timeout, null);
 }
 
 // ------------------------------------------------------------------ signals
@@ -196,7 +196,7 @@ pub fn takeResize() bool {
 test "errnoOf decodes negative syscall results" {
     try std.testing.expect(errnoOf(0) == null);
     try std.testing.expect(errnoOf(7) == null);
-    const encoded: usize = @bitCast(@as(isize, -@as(isize, @intFromEnum(linux.E.INVAL))));
+    const encoded: usize = @bitCast(@as(isize, -@as(isize, 22))); // EINVAL
     try std.testing.expect(errnoOf(encoded).? == .INVAL);
 }
 

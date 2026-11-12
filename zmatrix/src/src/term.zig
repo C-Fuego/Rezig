@@ -1,8 +1,8 @@
 //! 终端控制：raw 模式、alternate screen、光标、窗口尺寸、信号。
-//! 直接用 std.os.linux 的系统调用，绕开 0.17 的 std.Io 体系。
+//! 系统调用经 xsys.zig 垫片发出：Linux 上仍是原来的裸 syscall，macOS 等自动走 libc。
 const std = @import("std");
 const posix = std.posix;
-const linux = std.os.linux;
+const sys = @import("xsys.zig");
 
 pub const STDOUT = posix.STDOUT_FILENO;
 pub const STDIN = posix.STDIN_FILENO;
@@ -22,20 +22,20 @@ pub const DEFAULT_SIZE = Size{ .cols = 80, .rows = 24 };
 /// 控制终端。stdout 是管道时（`zmatrix | zlolcat`）只能从这里问到真实尺寸。
 pub const TTY_PATH = "/dev/tty";
 
-const TIOCGWINSZ: u32 = 0x5413;
-const TCGETS: u32 = 0x5401;
+const TIOCGWINSZ: u32 = sys.ioctl_req.TIOCGWINSZ;
+const TCGETS: u32 = sys.ioctl_req.TCGETS;
 
-fn linuxErrno(rc: usize) ?linux.E {
-    const signed: isize = @bitCast(rc);
-    if (signed >= 0) return null;
-    return @enumFromInt(@as(u16, @intCast(-signed)));
+fn linuxErrno(rc: usize) ?sys.Err {
+    const e = sys.errno(rc);
+    if (e == .SUCCESS) return null;
+    return e;
 }
 
 /// 写全部字节到 fd；EINTR/零进展时重试。
 pub fn writeAll(fd: posix.fd_t, bytes: []const u8) error{WriteFailed}!void {
     var off: usize = 0;
     while (off < bytes.len) {
-        const rc = linux.write(fd, bytes.ptr + off, bytes.len - off);
+        const rc = sys.write(fd, bytes.ptr + off, bytes.len - off);
         if (linuxErrno(rc)) |e| {
             switch (e) {
                 .INTR, .AGAIN => continue,
@@ -55,7 +55,7 @@ pub const ReadResult = union(enum) {
 
 /// 从 fd 读一次（非阻塞/管道都安全）。
 pub fn readSome(fd: posix.fd_t, buf: []u8) ReadResult {
-    const rc = linux.read(fd, buf.ptr, buf.len);
+    const rc = sys.read(fd, buf.ptr, buf.len);
     if (linuxErrno(rc)) |e| {
         switch (e) {
             .INTR, .AGAIN => return .retry,
@@ -69,7 +69,7 @@ pub fn readSome(fd: posix.fd_t, buf: []u8) ReadResult {
 /// ioctl(TIOCGWINSZ)；只有拿不到或维度为 0 时才返回 null，交由调用者继续回退。
 pub fn querySize(fd: posix.fd_t) ?Size {
     var ws: posix.winsize = .{ .row = 0, .col = 0, .xpixel = 0, .ypixel = 0 };
-    const rc = linux.ioctl(fd, TIOCGWINSZ, @intFromPtr(&ws));
+    const rc = sys.ioctl(fd, TIOCGWINSZ, @intFromPtr(&ws));
     if (linuxErrno(rc) != null) return null;
     if (ws.col == 0 or ws.row == 0) return null;
     return .{ .cols = ws.col, .rows = ws.row };
@@ -81,7 +81,7 @@ pub fn getSize(fd: posix.fd_t) Size {
 
 /// 打开控制终端；没有控制终端（daemon / 容器）时返回 null。
 pub fn openTty() ?posix.fd_t {
-    const rc = linux.open(TTY_PATH, .{ .ACCMODE = .RDWR, .CLOEXEC = true }, 0);
+    const rc = sys.open(TTY_PATH, .{ .ACCMODE = .RDWR, .CLOEXEC = true }, 0);
     if (linuxErrno(rc)) |_| return null;
     return @intCast(rc);
 }
@@ -110,7 +110,7 @@ pub fn sizeFromEnv(env_cols: ?[]const u8, env_rows: ?[]const u8) ?Size {
 pub fn detectSize(env_cols: ?[]const u8, env_rows: ?[]const u8) Size {
     if (querySize(STDOUT)) |s| return s;
     if (openTty()) |fd| {
-        defer _ = linux.close(fd);
+        defer _ = sys.close(fd);
         if (querySize(fd)) |s| return s;
     }
     if (sizeFromEnv(env_cols, env_rows)) |s| return s;
@@ -122,7 +122,7 @@ pub fn detectSize(env_cols: ?[]const u8, env_rows: ?[]const u8) Size {
 /// stdin 被关掉（`zmatrix 0<&-`）时会直接 panic。这里自己发 ioctl 判错。
 pub fn isTty(fd: posix.fd_t) bool {
     var t: posix.termios = undefined;
-    const rc = linux.ioctl(fd, TCGETS, @intFromPtr(&t));
+    const rc = sys.ioctl(fd, TCGETS, @intFromPtr(&t));
     return linuxErrno(rc) == null;
 }
 
@@ -174,13 +174,13 @@ pub fn sleepNs(ns: u64) void {
         .nsec = @intCast(ns % std.time.ns_per_s),
     };
     // EINTR 时直接返回：主循环下一轮还会再来，不需要在这里补睡。
-    _ = linux.nanosleep(&ts, null);
+    _ = sys.nanosleep(&ts, null);
 }
 
 /// 单调时钟纳秒，用于算「这一帧已经花了多久」。
 pub fn nowNs() u64 {
     var ts: posix.timespec = undefined;
-    _ = linux.clock_gettime(linux.CLOCK.MONOTONIC, &ts);
+    _ = sys.clock_gettime(sys.CLOCK.MONOTONIC, &ts);
     const sec: u64 = @intCast(@max(ts.sec, 0));
     const nsec: u64 = @intCast(@max(ts.nsec, 0));
     return sec * std.time.ns_per_s + nsec;

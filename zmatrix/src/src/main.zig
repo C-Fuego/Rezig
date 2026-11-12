@@ -1,7 +1,7 @@
 //! zmatrix —— 终端字符雨，cmatrix 风格。
 const std = @import("std");
 const posix = std.posix;
-const linux = std.os.linux;
+const sys = @import("xsys.zig");
 
 const charset = @import("charset.zig");
 const color = @import("color.zig");
@@ -272,10 +272,10 @@ fn nextCharset(current: charset.Kind, custom_len: usize) charset.Kind {
 
 fn seedNow() u64 {
     var ts: posix.timespec = undefined;
-    _ = linux.clock_gettime(linux.CLOCK.MONOTONIC, &ts);
+    _ = sys.clock_gettime(sys.CLOCK.MONOTONIC, &ts);
     const sec: u64 = @intCast(@max(ts.sec, 0));
     const nsec: u64 = @intCast(@max(ts.nsec, 0));
-    const pid: u64 = @intCast(linux.getpid());
+    const pid: u64 = @intCast(sys.getpid());
     return (sec *% 1_000_000_007) ^ (nsec *% 2_654_435_761) ^ (pid << 32);
 }
 
