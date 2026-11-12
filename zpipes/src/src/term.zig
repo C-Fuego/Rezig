@@ -1,6 +1,6 @@
 const std = @import("std");
 const posix = std.posix;
-const linux = std.os.linux;
+const sys = @import("xsys.zig");
 
 pub const Size = struct {
     cols: usize,
@@ -57,8 +57,8 @@ pub fn getSize() Size {
     };
     for (fds) |fd| {
         var ws: posix.winsize = std.mem.zeroes(posix.winsize);
-        const rc = linux.ioctl(fd, posix.T.IOCGWINSZ, @intFromPtr(&ws));
-        if (linux.errno(rc) == .SUCCESS and ws.col > 0 and ws.row > 0) {
+        const rc = sys.ioctl(fd, sys.ioctl_req.TIOCGWINSZ, @intFromPtr(&ws));
+        if (sys.errno(rc) == .SUCCESS and ws.col > 0 and ws.row > 0) {
             return .{
                 .cols = @as(usize, @max(ws.col, 2)),
                 .rows = @as(usize, @max(ws.row, 2)),
@@ -69,12 +69,12 @@ pub fn getSize() Size {
     return .{ .cols = 80, .rows = 24 };
 }
 
-/// 0.17 不再提供 std.posix.write，直接走 Linux 系统调用并处理 EINTR/短写。
+/// 0.17 不再提供 std.posix.write，经 xsys 垫片写 fd 并处理 EINTR/短写。
 pub fn writeAll(fd: posix.fd_t, bytes: []const u8) !void {
     var off: usize = 0;
     while (off < bytes.len) {
-        const rc = linux.write(fd, bytes.ptr + off, bytes.len - off);
-        switch (linux.errno(rc)) {
+        const rc = sys.write(fd, bytes.ptr + off, bytes.len - off);
+        switch (sys.errno(rc)) {
             .SUCCESS => {
                 if (rc == 0) return error.WriteFailed;
                 off += rc;
@@ -93,6 +93,14 @@ pub fn writeAll(fd: posix.fd_t, bytes: []const u8) !void {
     }
 }
 
+/// fd 是不是终端：用 ioctl(TCGETS) 判错，坏 fd 安全返回 false。
+pub fn isTty(fd: posix.fd_t) bool {
+    if (fd < 0) return false;
+    var t: sys.termios = undefined;
+    const rc = sys.tcgetattr(fd, &t);
+    return sys.errno(rc) == .SUCCESS;
+}
+
 pub fn print(fd: posix.fd_t, comptime fmt: []const u8, args: anytype) !void {
     var buf: [1024]u8 = undefined;
     const s = std.fmt.bufPrint(&buf, fmt, args) catch return error.MessageTooLong;
@@ -100,19 +108,13 @@ pub fn print(fd: posix.fd_t, comptime fmt: []const u8, args: anytype) !void {
 }
 
 /// 非阻塞地读按键；没有输入时返回 0。
+/// 经 xsys 垫片统一 errno 语义：EOF / EIO / EAGAIN 都当作"此刻没有按键"，不冒泡成致命错误。
 pub fn readInput(buf: []u8) !usize {
-    var fds = [_]posix.pollfd{.{
-        .fd = posix.STDIN_FILENO,
-        .events = posix.POLL.IN,
-        .revents = 0,
-    }};
-    const n = try posix.poll(&fds, 0);
-    if (n == 0) return 0;
-    if ((fds[0].revents & posix.POLL.IN) == 0) return 0;
-
-    return posix.read(posix.STDIN_FILENO, buf) catch |err| switch (err) {
-        error.WouldBlock => 0,
-        else => return err,
+    const rc = sys.read_nonblock(posix.STDIN_FILENO, buf);
+    return switch (sys.errno(rc)) {
+        .SUCCESS => rc,
+        .INTR, .AGAIN, .IO => 0,
+        else => if (rc == 0) 0 else 0,
     };
 }
 
@@ -123,6 +125,9 @@ pub const RawMode = struct {
 
     /// 等价于 cfmakeraw：关闭行缓冲、回显、信号键和输出处理。
     pub fn enable(fd: posix.fd_t) !RawMode {
+        // 非终端（stdin 被重定向成管道/文件）时直接告诉调用方，而不是让
+        // std.posix.tcgetattr 把 ENOTTY 当成 unreachable 触发 panic/意外错误。
+        if (!isTty(fd)) return error.NotATerminal;
         const orig = try posix.tcgetattr(fd);
         var raw = orig;
 
@@ -170,18 +175,18 @@ pub fn leaveScreen() void {
 }
 
 pub fn nowNs() u64 {
-    var ts: linux.timespec = undefined;
-    const rc = linux.clock_gettime(.MONOTONIC, &ts);
-    if (linux.errno(rc) != .SUCCESS) return 0;
+    var ts: posix.timespec = undefined;
+    const rc = sys.clock_gettime(sys.CLOCK.MONOTONIC, &ts);
+    if (sys.errno(rc) != .SUCCESS) return 0;
     const sec: u64 = @intCast(ts.sec);
     const nsec: u64 = @intCast(ts.nsec);
     return sec *% 1_000_000_000 +% nsec;
 }
 
 pub fn sleepNs(ns: u64) void {
-    var ts: linux.timespec = .{
+    var ts: posix.timespec = .{
         .sec = @intCast(ns / 1_000_000_000),
         .nsec = @intCast(ns % 1_000_000_000),
     };
-    _ = linux.nanosleep(&ts, null);
+    _ = sys.nanosleep(&ts, null);
 }
