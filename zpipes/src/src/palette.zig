@@ -241,10 +241,77 @@ pub const Colors = struct {
     color_mode: ColorMode = .ansi,
     palette: Mode = .c8,
     theme: Theme = .default,
-    bold: bool = false,
+    // pipes.sh 默认 BOLD=1，不亮就跟原版差一截。
+    bold: bool = true,
     explicit: [256]u8 = @splat(0),
     explicit_len: usize = 0,
     next_explicit: usize = 0,
+    // pipes.sh 初始化时颜色是"随机起点 + 依次递增"，不是各自随机。
+    cycle_pos: usize = 0,
+    cycle_started: bool = false,
+
+    /// pipes.sh 的默认配色表 C=(1 2 3 4 5 6 7 0)，含 0 号黑。
+    const default_cycle = [8]u8{ 1, 2, 3, 4, 5, 6, 7, 0 };
+
+    fn list(self: *const Colors) []const u8 {
+        if (self.explicit_len > 0) return self.explicit[0..self.explicit_len];
+        return &default_cycle;
+    }
+
+    /// 是否走 pipes.sh 那套"8 色固定表"的取色逻辑。
+    /// 用了主题、88/256 扩展色或 RGB 时仍走原来的随机取色。
+    fn usesClassicList(self: *const Colors) bool {
+        return self.color_mode == .ansi and self.theme == .default and self.palette == .c8;
+    }
+
+    fn makeAnsi(self: *const Colors, index: u8) Color {
+        return .{
+            .kind = .ansi,
+            .index = index,
+            .mode = self.palette,
+            .custom = self.explicit_len > 0,
+            .bold = self.bold,
+        };
+    }
+
+    /// pipes.sh 的 init_pipes：起点随机，之后沿列表顺序循环。
+    pub fn cycle(self: *Colors, rng: std.Random) Color {
+        if (!self.usesClassicList()) return self.pick(rng);
+        const l = self.list();
+        if (l.len == 0) return .{ .kind = .none, .bold = self.bold };
+        if (!self.cycle_started) {
+            self.cycle_pos = rng.uintLessThan(usize, l.len);
+            self.cycle_started = true;
+        }
+        const idx = l[self.cycle_pos % l.len];
+        self.cycle_pos = (self.cycle_pos + 1) % l.len;
+        return self.makeAnsi(idx);
+    }
+
+    /// pipes.sh 的 `CN * RANDOM / M`：从当前配色列表里随机挑一个。
+    pub fn pick(self: *Colors, rng: std.Random) Color {
+        switch (self.color_mode) {
+            .none => return .{ .kind = .none, .bold = self.bold },
+            .rgb => {
+                var c = randomRgb(self.theme, rng);
+                c.bold = self.bold;
+                return c;
+            },
+            .ansi => {},
+        }
+        if (!self.usesClassicList()) {
+            return .{
+                .kind = .ansi,
+                .index = randomAnsi(self.theme, self.palette, rng),
+                .mode = self.palette,
+                .custom = self.explicit_len > 0,
+                .bold = self.bold,
+            };
+        }
+        const l = self.list();
+        if (l.len == 0) return .{ .kind = .none, .bold = self.bold };
+        return self.makeAnsi(l[rng.uintLessThan(usize, l.len)]);
+    }
 
     pub fn addExplicit(self: *Colors, spec: []const u8) !void {
         var it = std.mem.splitScalar(u8, spec, ',');
@@ -259,35 +326,9 @@ pub const Colors = struct {
         }
     }
 
+    /// 旧名字，语义等同 pick()：随机取一个颜色。
     pub fn next(self: *Colors, rng: std.Random) Color {
-        const bold = self.bold;
-        switch (self.color_mode) {
-            .none => return .{ .kind = .none, .bold = bold },
-            .rgb => {
-                var c = randomRgb(self.theme, rng);
-                c.bold = bold;
-                return c;
-            },
-            .ansi => {
-                if (self.explicit_len > 0) {
-                    const idx = self.explicit[self.next_explicit % self.explicit_len];
-                    self.next_explicit +%= 1;
-                    return .{
-                        .kind = .ansi,
-                        .index = idx,
-                        .mode = self.palette,
-                        .custom = true,
-                        .bold = bold,
-                    };
-                }
-                return .{
-                    .kind = .ansi,
-                    .index = randomAnsi(self.theme, self.palette, rng),
-                    .mode = self.palette,
-                    .bold = bold,
-                };
-            },
-        }
+        return self.pick(rng);
     }
 };
 
@@ -314,7 +355,8 @@ pub fn appendSgr(out: *std.ArrayList(u8), allocator: std.mem.Allocator, c: Color
         .none => {},
         .ansi => {
             var buf: [24]u8 = undefined;
-            const s = if (c.custom or c.mode == .c88 or c.mode == .c256)
+            // pipes.sh 用 tput setaf：8 色终端下 -c 3 就是 \e[33m，不是 38;5;3。
+            const s = if (c.mode == .c88 or c.mode == .c256 or c.index >= 8)
                 try std.fmt.bufPrint(&buf, "\x1b[38;5;{d}m", .{c.index})
             else if (c.mode == .c8)
                 try std.fmt.bufPrint(&buf, "\x1b[3{d}m", .{c.index})
@@ -353,7 +395,10 @@ test "主题 ANSI 取色都落在声明范围内" {
                     try std.testing.expect(found);
                 } else {
                     const range = themeAnsiRange(theme, mode);
-                    try std.testing.expect(c.index >= range.lo and c.index <= range.hi);
+                    // pipes.sh 的默认配色表是 (1 2 3 4 5 6 7 0)，含 0 号黑，要单独放行。
+                    const allow_black = theme == .default and mode == .c8;
+                    try std.testing.expect((c.index >= range.lo and c.index <= range.hi) or
+                        (allow_black and c.index == 0));
                 }
             }
         }
@@ -380,7 +425,8 @@ test "matrix 主题 RGB 偏绿，rainbow 能旋转色相" {
 }
 
 test "none 模式不产生颜色 SGR" {
-    var colors = Colors{ .color_mode = .none };
+    // bold 默认开，这里只验证"没有颜色"这一件事，所以显式关掉加粗。
+    var colors = Colors{ .color_mode = .none, .bold = false };
     var prng = std.Random.DefaultPrng.init(1);
     const c = colors.next(prng.random());
     try std.testing.expectEqual(Kind.none, c.kind);

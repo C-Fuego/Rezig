@@ -7,9 +7,8 @@ const pipe = @import("pipe.zig");
 /// 默认只用 heavy 一种（pipes.sh 的 `-t 0`、pipes-rs 的 `KindSet::from_one(Heavy)`）。
 /// 以前这里塞了全部 7 种，直接跑 `zpipes` 会同时冒出粗线、细线、圆角、双线、
 /// 半方块、锯齿和圆点——看起来像"各种形态的线条"，而不是一条管道。
-const default_kinds = [8]pipe.Kind{
-    .heavy, .heavy, .heavy, .heavy, .heavy, .heavy, .heavy, .heavy,
-};
+/// 默认只选 heavy（pipes.sh 的 -t 0）。
+const default_set_ids: [32]i16 = @splat(0);
 
 pub const Config = struct {
     help: bool = false,
@@ -19,10 +18,18 @@ pub const Config = struct {
     colors: palette.Colors = .{},
     rainbow: u8 = 0,
     inherit_style: bool = false,
-    kinds: [8]pipe.Kind = default_kinds,
-    kind_count: usize = 1,
+    /// pipes.sh 的 -K：环绕时不换色换样式。
+    keep_style: bool = false,
+    /// pipes.sh 的 -R：随机出生位置与方向。
+    random_start: bool = false,
+    /// 选中的字形表：>=0 是 pipe.builtin 的下标，<0 表示第 -(id+1) 套自定义表。
+    set_ids: [32]i16 = default_set_ids,
+    set_count: usize = 1,
+    /// -t c<16 字符> 的原文，main 里再按 UTF-8 切成 16 个字形。
+    custom_texts: [16][]const u8 = undefined,
+    custom_count: usize = 0,
 
-    fps: u32 = 50,
+    fps: u32 = 75,
     fps_set: bool = false,
     fps_from_cli: bool = false,
     delay_ms: u32 = 20,
@@ -34,7 +41,8 @@ pub const Config = struct {
     pipe_count: usize = 1,
     max_length: u32 = 0,
     max_total_length: u32 = 0,
-    turn_chance: f32 = 0.15,
+    /// pipes.sh 的 -s：直行概率 1 in N，默认 13。
+    straight_divisor: u32 = 13,
     /// 累计写入字符数达到该值后清屏重画（对应 pipes.sh 的 -r，0 = 不重置）
     reset_chars: u32 = 2000,
 };
@@ -113,28 +121,44 @@ fn applyColorList(path: []const u8, line: usize, cfg: *Config, value: []const u8
         return configFail(path, line, "color must be comma-separated numbers 1-255", .{});
 }
 
+/// 把概率换成 pipes.sh 的 1 in N 表示。
+pub fn divisorFromChance(chance: f32) u32 {
+    if (!(chance > 0.0)) return 1_000_000;
+    if (chance >= 1.0) return 1;
+    const d: f32 = 1.0 / chance;
+    var v: u32 = @intFromFloat(@round(d));
+    if (v < 1) v = 1;
+    if (v > 1_000_000) v = 1_000_000;
+    return v;
+}
+
+pub fn turnChance(self: *const Config) f32 {
+    return 1.0 / @as(f32, @floatFromInt(self.straight_divisor));
+}
+
+/// --kind 名字列表，逗号可分隔，重复的忽略。
 fn applyKindList(path: []const u8, line: usize, cfg: *Config, value: []const u8) error{InvalidConfig}!void {
-    cfg.kind_count = 0;
+    var keep: [32]i16 = undefined;
+    var keep_count: usize = 0;
     var parts = std.mem.splitScalar(u8, value, ',');
     while (parts.next()) |raw_part| {
         const part = std.mem.trim(u8, raw_part, " \t");
         if (part.len == 0) return configFail(path, line, "kind list contains an empty name", .{});
-        const k = pipe.parseKind(part) orelse
+        const id = pipe.parseKind(part) orelse
             return configFail(path, line, "unknown pipe kind '{s}'", .{part});
-
-        var duplicate = false;
-        for (cfg.kinds[0..cfg.kind_count]) |existing| {
-            if (existing == k) duplicate = true;
+        var dup = false;
+        for (keep[0..keep_count]) |e| {
+            if (e == @as(i16, @intCast(id))) dup = true;
         }
-        if (!duplicate) {
-            if (cfg.kind_count >= cfg.kinds.len) {
-                return configFail(path, line, "too many pipe kinds", .{});
-            }
-            cfg.kinds[cfg.kind_count] = k;
-            cfg.kind_count += 1;
+        if (!dup) {
+            if (keep_count >= keep.len) return configFail(path, line, "too many pipe kinds", .{});
+            keep[keep_count] = @intCast(id);
+            keep_count += 1;
         }
     }
-    if (cfg.kind_count == 0) return configFail(path, line, "kind list is empty", .{});
+    if (keep_count == 0) return configFail(path, line, "kind list is empty", .{});
+    @memcpy(cfg.set_ids[0..keep_count], keep[0..keep_count]);
+    cfg.set_count = keep_count;
 }
 
 /// 只支持 key = value、# 注释；[section] 行被忽略。
@@ -183,6 +207,10 @@ pub fn parseToml(cfg: *Config, text: []const u8, path: []const u8) error{Invalid
             cfg.colors.bold = try parseBoolValue(path, line_no, key, value);
         } else if (keyIs(key, "inherit_style")) {
             cfg.inherit_style = try parseBoolValue(path, line_no, key, value);
+        } else if (keyIs(key, "keep_style")) {
+            cfg.keep_style = try parseBoolValue(path, line_no, key, value);
+        } else if (keyIs(key, "random_start")) {
+            cfg.random_start = try parseBoolValue(path, line_no, key, value);
         } else if (keyIs(key, "kind")) {
             try applyKindList(path, line_no, cfg, value);
         } else if (keyIs(key, "fps")) {
@@ -210,7 +238,9 @@ pub fn parseToml(cfg: *Config, text: []const u8, path: []const u8) error{Invalid
         } else if (keyIs(key, "max_total_length")) {
             cfg.max_total_length = try parseU32Value(path, line_no, key, value, 0, 1_000_000);
         } else if (keyIs(key, "turn")) {
-            cfg.turn_chance = try parseFractionValue(path, line_no, key, value, 0.0);
+            cfg.straight_divisor = divisorFromChance(try parseFractionValue(path, line_no, key, value, 0.0));
+        } else if (keyIs(key, "straight")) {
+            cfg.straight_divisor = try parseU32Value(path, line_no, key, value, 5, 15);
         } else if (keyIs(key, "reset")) {
             cfg.reset_chars = try parseU32Value(path, line_no, key, value, 0, 10_000_000);
         } else {
@@ -250,7 +280,7 @@ test "TOML 解析 key = value、注释、section 和类型" {
     try std.testing.expectEqual(@as(usize, 4), cfg.pipe_count);
     try std.testing.expectEqual(@as(u32, 9), cfg.max_length);
     try std.testing.expectEqual(@as(u32, 20), cfg.max_total_length);
-    try std.testing.expectApproxEqAbs(@as(f32, 0.25), cfg.turn_chance, 0.001);
+    try std.testing.expectEqual(@as(u32, 4), cfg.straight_divisor);
     try std.testing.expectEqual(@as(u32, 2000), cfg.reset_chars);
     try std.testing.expectEqual(palette.ColorMode.rgb, cfg.colors.color_mode);
     try std.testing.expectEqual(palette.Theme.pastel, cfg.colors.theme);
@@ -259,9 +289,9 @@ test "TOML 解析 key = value、注释、section 和类型" {
     try std.testing.expect(cfg.colors.bold);
     try std.testing.expect(cfg.inherit_style);
     try std.testing.expectEqual(@as(usize, 3), cfg.colors.explicit_len);
-    try std.testing.expectEqual(@as(usize, 2), cfg.kind_count);
-    try std.testing.expectEqual(pipe.Kind.heavy, cfg.kinds[0]);
-    try std.testing.expectEqual(pipe.Kind.dots, cfg.kinds[1]);
+    try std.testing.expectEqual(@as(usize, 2), cfg.set_count);
+    try std.testing.expectEqual(@as(i16, 0), cfg.set_ids[0]);
+    try std.testing.expectEqual(@as(i16, 6), cfg.set_ids[1]);
 }
 
 test "TOML 中 fps 与 delay 冲突、非法值都报错" {

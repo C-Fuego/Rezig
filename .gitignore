@@ -24,3 +24,6 @@ zeraora/sprites.bin
 
 # 本地改动时的临时备份（*.orig）
 *.orig
+
+# macOS
+.DS_Store
