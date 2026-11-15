@@ -9,8 +9,6 @@ embedded in the binary: no data files, no runtime lookups.
 
 ![](assets/screenshots/zeraora.png)
 
-<sub>Sprite output of `zeraora name zeraora`.</sub>
-
 ## Features
 
 - Pokemon from every generation, including shinies, megas, gigantamax and
