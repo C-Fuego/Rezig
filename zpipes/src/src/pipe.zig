@@ -2,230 +2,288 @@ const std = @import("std");
 const grid = @import("grid.zig");
 const palette = @import("palette.zig");
 
-pub const Dir = enum {
-    up,
-    down,
-    left,
-    right,
+/// 方向编号严格对齐 pipes.sh：0 上、1 右、2 下、3 左。
+/// 这样字符表可以直接用 pipes.sh 的索引 prev*4+next 访问。
+pub const Dir = enum(u2) {
+    up = 0,
+    right = 1,
+    down = 2,
+    left = 3,
+
+    /// pipes.sh 的 `n = l + (2*(RANDOM%2)-1)`：只在 ±1 里转，永不掉头。
+    pub fn turned(self: Dir, clockwise: bool) Dir {
+        const i: u3 = @intFromEnum(self);
+        const v: u3 = if (clockwise) (i + 1) % 4 else (i + 3) % 4;
+        return @enumFromInt(@as(u2, @intCast(v)));
+    }
+
+    pub fn dx(self: Dir) i32 {
+        return switch (self) {
+            .left => -1,
+            .right => 1,
+            else => 0,
+        };
+    }
+
+    pub fn dy(self: Dir) i32 {
+        return switch (self) {
+            .up => -1,
+            .down => 1,
+            else => 0,
+        };
+    }
 };
 
-pub const Kind = enum {
-    heavy,
-    light,
-    curved,
-    double,
-    blocks,
-    knobby,
-    dots,
+/// 一套 16 个字形，索引 = 进入方向 * 4 + 离开方向。
+pub const Set = [16][]const u8;
+
+// 每套 16 个字形，索引 = 进入方向 * 4 + 离开方向，与 pipes.sh 的 sets[] 一一对应。
+// 反向（prev 与 next 相反）的四个格子原版放的是空格；因为转向只会 ±1，
+// 这四个位置永远不会被访问到，保留空格是为了和原版逐字节一致。
+
+// "┃┏ ┓┛━┓  ┗┃┛┗ ┏━"
+const heavy_chars = [16][]const u8{
+    "┃", "┏", " ", "┓",
+    "┛", "━", "┓", " ",
+    " ", "┗", "┃", "┛",
+    "┗", " ", "┏", "━",
 };
 
-// 每种管道 8 个字符：上、下、左、右、左上弯、右上弯、左下弯、右下弯。
-const heavy_chars = [8][]const u8{ "┃", "┃", "━", "━", "┏", "┓", "┗", "┛" };
-const light_chars = [8][]const u8{ "│", "│", "─", "─", "┌", "┐", "└", "┘" };
-const curved_chars = [8][]const u8{ "│", "│", "─", "─", "╭", "╮", "╰", "╯" };
-const double_chars = [8][]const u8{ "║", "║", "═", "═", "╔", "╗", "╚", "╝" };
-const block_chars = [8][]const u8{ "█", "█", "▀", "▀", "█", "█", "▀", "▀" };
-const knobby_chars = [8][]const u8{ "╽", "╿", "╼", "╾", "┎", "┒", "┖", "┚" };
-const dot_chars = [8][]const u8{ "•", "•", "•", "•", "•", "•", "•", "•" };
+// "│┌ ┐┘─┐  └│┘└ ┌─"
+const light_chars = [16][]const u8{
+    "│", "┌", " ", "┐",
+    "┘", "─", "┐", " ",
+    " ", "└", "│", "┘",
+    "└", " ", "┌", "─",
+};
 
-fn chars(kind: Kind) *const [8][]const u8 {
-    return switch (kind) {
-        .heavy => &heavy_chars,
-        .light => &light_chars,
-        .curved => &curved_chars,
-        .double => &double_chars,
-        .blocks => &block_chars,
-        .knobby => &knobby_chars,
-        .dots => &dot_chars,
-    };
-}
+// "│╭ ╮╯─╮  ╰│╯╰ ╭─"
+const curved_chars = [16][]const u8{
+    "│", "╭", " ", "╮",
+    "╯", "─", "╮", " ",
+    " ", "╰", "│", "╯",
+    "╰", " ", "╭", "─",
+};
 
-pub fn parseKind(name: []const u8) ?Kind {
-    if (std.mem.eql(u8, name, "heavy")) return .heavy;
-    if (std.mem.eql(u8, name, "light")) return .light;
-    if (std.mem.eql(u8, name, "curved")) return .curved;
-    if (std.mem.eql(u8, name, "double")) return .double;
-    // pipes-rs 把这一套叫 outline；两个名字都收
-    if (std.mem.eql(u8, name, "outline")) return .double;
-    if (std.mem.eql(u8, name, "blocks")) return .blocks;
-    if (std.mem.eql(u8, name, "knobby")) return .knobby;
-    if (std.mem.eql(u8, name, "dots")) return .dots;
+// "║╔ ╗╝═╗  ╚║╝╚ ╔═"
+const double_chars = [16][]const u8{
+    "║", "╔", " ", "╗",
+    "╝", "═", "╗", " ",
+    " ", "╚", "║", "╝",
+    "╚", " ", "╔", "═",
+};
+
+// "|+ ++-+  +|++ +-"
+const ascii_chars = [16][]const u8{
+    "|", "+", " ", "+",
+    "+", "-", "+", " ",
+    " ", "+", "|", "+",
+    "+", " ", "+", "-",
+};
+
+// "|/ \/-\  \|/\ /-"
+const ascii_slash_chars = [16][]const u8{
+    "|", "/",  " ", "\\",
+    "/", "-",  "\\", " ",
+    " ", "\\", "|", "/",
+    "\\", " ", "/", "-",
+};
+
+// "-\ /\|/  /-\/ \|"
+const railway_chars = [16][]const u8{
+    "-", "\\", " ", "/",
+    "\\", "|", "/", " ",
+    " ", "/", "-", "\\",
+    "/", " ", "\\", "|",
+};
+
+// "╿┍ ┑┚╼┒  ┕╽┙┖ ┎╾"：这套上下不对称，必须整表照抄，不能套对称映射。
+const knobby_chars = [16][]const u8{
+    "╿", "┍", " ", "┑",
+    "┚", "╼", "┒", " ",
+    " ", "┕", "╽", "┙",
+    "┖", " ", "┎", "╾",
+};
+
+// ".. ....  .... .."
+const dot_chars = [16][]const u8{
+    ".", ".", " ", ".",
+    ".", ".", ".", " ",
+    " ", ".", ".", ".",
+    ".", " ", ".", ".",
+};
+
+// ".o oo.o  o.oo o."
+const doto_chars = [16][]const u8{
+    ".", "o", " ", "o",
+    "o", ".", "o", " ",
+    " ", "o", ".", "o",
+    "o", " ", "o", ".",
+};
+
+// 实心块：水平段也用整块，避免原来 ▀ 和 █ 混用导致的半格错位。
+const block_chars = [16][]const u8{
+    "█", "█", "█", "█",
+    "█", "█", "█", "█",
+    "█", "█", "█", "█",
+    "█", "█", "█", "█",
+};
+
+// pipes.sh 的 sets[] 顺序：-t 的数字就是这个下标。
+pub const builtin = [11]*const Set{
+    &heavy_chars,
+    &curved_chars,
+    &light_chars,
+    &double_chars,
+    &ascii_chars,
+    &ascii_slash_chars,
+    &dot_chars,
+    &doto_chars,
+    &railway_chars,
+    &knobby_chars,
+    &block_chars,
+};
+
+/// 只有前 10 个能用 -t 数字选，和 pipes.sh 一致；blocks 是额外的一套。
+pub const type_count: usize = 10;
+
+pub const builtin_names = [11][]const u8{
+    "heavy", "curved", "light", "double", "ascii", "ascii-slash",
+    "dots",   "dots-o", "railway", "knobby", "blocks",
+};
+
+pub fn parseKind(name: []const u8) ?usize {
+    for (builtin_names, 0..) |n, i| {
+        if (std.mem.eql(u8, name, n)) return i;
+    }
+    // pipes-rs 把 double 叫 outline
+    if (std.mem.eql(u8, name, "outline")) return 3;
     return null;
 }
 
-/// 根据进入方向和离开方向选出字符下标。
-fn glyphIndex(prev: Dir, next: Dir) usize {
-    return switch (prev) {
-        .up => switch (next) {
-            .left => 5,
-            .right => 4,
-            else => 0,
-        },
-        .down => switch (next) {
-            .left => 7,
-            .right => 6,
-            else => 1,
-        },
-        .left => switch (next) {
-            .up => 6,
-            .down => 4,
-            else => 2,
-        },
-        .right => switch (next) {
-            .up => 7,
-            .down => 5,
-            else => 3,
-        },
-    };
+/// 索引 = 进入方向 * 4 + 离开方向，和 pipes.sh 的 SETS[v*16 + l*4 + n] 同构。
+pub fn glyphFor(set: *const Set, prev: Dir, next: Dir) []const u8 {
+    return set[@as(usize, @intFromEnum(prev)) * 4 + @as(usize, @intFromEnum(next))];
 }
 
-fn straightIndex(dir: Dir) usize {
-    return switch (dir) {
-        .up => 0,
-        .down => 1,
-        .left => 2,
-        .right => 3,
-    };
+/// 把 -t c<16 个字符> 切成 16 个字形。按 UTF-8 边界切，不是按字节。
+pub fn splitGlyphs(text: []const u8, out: *Set) !usize {
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < text.len and n < 16) {
+        var j = i + 1;
+        while (j < text.len and (text[j] & 0xC0) == 0x80) : (j += 1) {}
+        out[n] = text[i..j];
+        n += 1;
+        i = j;
+    }
+    return n;
 }
 
-fn glyphFor(kind: Kind, prev: Dir, next: Dir) []const u8 {
-    return chars(kind)[glyphIndex(prev, next)];
-}
-
-fn straightGlyph(kind: Kind, dir: Dir) []const u8 {
-    return chars(kind)[straightIndex(dir)];
-}
+/// step() 需要的外部状态，打包成一份，避免参数表太长。
+pub const StepOpts = struct {
+    /// 每步转向的概率；pipes.sh 的 1/s。
+    turn_chance: f32,
+    rainbow: u8 = 0,
+    /// pipes.sh 的 -K：环绕时保持颜色和样式不变。
+    keep_style: bool = false,
+    colors: ?*palette.Colors = null,
+    sets: []const *const Set = &.{},
+};
 
 pub const Pipe = struct {
     x: i32 = 0,
     y: i32 = 0,
-    prev_dir: Dir = .up,
     dir: Dir = .up,
-    kind: Kind = .heavy,
+    set: *const Set = &heavy_chars,
     color: palette.Color = .{ .kind = .none },
     alive: bool = false,
-    /// 该管道实际画出的格子数（含出生格）。
+    /// 该管道实际画出的格子数（出生时不画，所以从 0 开始）。
     length: u32 = 0,
     /// 出生序号，用于 --max-total-length 找最老管道。
     spawn_seq: u64 = 0,
+};
 
-    fn spawnInternal(g: *grid.Grid, rng: std.Random, kind: Kind, color: palette.Color) ?Pipe {
-        if (g.cols < 2 or g.rows < 2) return null;
+fn spawnInternal(g: *grid.Grid, rng: std.Random, set: *const Set, color: palette.Color, random_start: bool) ?Pipe {
+    if (g.cols < 2 or g.rows < 2) return null;
 
-        const cols: i32 = @intCast(g.cols);
-        const rows: i32 = @intCast(g.rows);
+    const cols: i32 = @intCast(g.cols);
+    const rows: i32 = @intCast(g.rows);
 
-        // pipes.sh 的出生方式：随机选一条边和一个方向，不管目标格是否已被占用
-        // （初始化里 v[i] = V[RANDOM*VN/M]，之后每轮从边缘进一格），因此这里
-        // 不做 isFree 检查，也永远不会因为"找不到空位"而 spawn 失败。
-        const dir: Dir = switch (rng.uintLessThan(u8, 4)) {
-            0 => .up,
-            1 => .down,
-            2 => .left,
-            else => .right,
-        };
+    var p = Pipe{
+        .set = set,
+        .color = color,
+        .alive = true,
+        .length = 0,
+    };
 
-        var x: i32 = 0;
-        var y: i32 = 0;
-        switch (dir) {
-            .up => {
-                x = rng.intRangeAtMost(i32, 0, cols - 1);
-                y = rows - 1;
-            },
-            .down => {
-                x = rng.intRangeAtMost(i32, 0, cols - 1);
-                y = 0;
-            },
-            .left => {
-                x = cols - 1;
-                y = rng.intRangeAtMost(i32, 0, rows - 1);
-            },
-            .right => {
-                x = 0;
-                y = rng.intRangeAtMost(i32, 0, rows - 1);
-            },
+    if (random_start) {
+        // pipes.sh -R：整屏随机位置 + 随机方向
+        p.dir = @enumFromInt(@as(u2, @intCast(rng.uintLessThan(u3, 4))));
+        p.x = rng.intRangeAtMost(i32, 0, cols - 1);
+        p.y = rng.intRangeAtMost(i32, 0, rows - 1);
+    } else {
+        // pipes.sh 默认：屏幕正中，方向朝上
+        p.dir = .up;
+        p.x = @divTrunc(cols, 2);
+        p.y = @divTrunc(rows, 2);
+    }
+
+    // 原版出生时不落笔，第一笔是在第一次 step 之后写在新格上的。
+    return p;
+}
+
+pub fn spawn(
+    g: *grid.Grid,
+    rng: std.Random,
+    set: *const Set,
+    color: palette.Color,
+    random_start: bool,
+) ?Pipe {
+    return spawnInternal(g, rng, set, color, random_start);
+}
+
+fn maybeTurn(dir: Dir, rng: std.Random, chance: f32) Dir {
+    if (chance <= 0.0) return dir;
+    if (rng.float(f32) >= chance) return dir;
+    return dir.turned(rng.boolean());
+}
+
+/// 一步，严格照 pipes.sh 的顺序：
+/// 前进 → 越界判定/换色换样式/环绕 → 决定下一步方向 → 在**新格**写一个字 → 方向切换。
+pub fn step(self: *Pipe, g: *grid.Grid, rng: std.Random, opts: StepOpts) void {
+    if (!self.alive) return;
+
+    if (opts.rainbow != 0) self.color = palette.rotateHue(self.color, opts.rainbow);
+
+    var nx = self.x + self.dir.dx();
+    var ny = self.y + self.dir.dy();
+
+    const cols: i32 = @intCast(g.cols);
+    const rows: i32 = @intCast(g.rows);
+
+    if (nx < 0 or ny < 0 or nx >= cols or ny >= rows) {
+        // pipes.sh: ((!KEEPCT && (x>=w || x<0 || y>=h || y<0))) && { 换色; 换样式 }
+        if (!opts.keep_style) {
+            if (opts.colors) |c| self.color = c.pick(rng);
+            if (opts.sets.len > 0) {
+                self.set = opts.sets[rng.uintLessThan(usize, opts.sets.len)];
+            }
         }
-
-        g.setGlyph(@intCast(x), @intCast(y), straightGlyph(kind, dir), color);
-
-        return .{
-            .x = x,
-            .y = y,
-            .prev_dir = dir,
-            .dir = dir,
-            .kind = kind,
-            .color = color,
-            .alive = true,
-            .length = 1,
-        };
-    }
-
-    pub fn spawn(
-        g: *grid.Grid,
-        rng: std.Random,
-        colors: *palette.Colors,
-        kinds: []const Kind,
-    ) ?Pipe {
-        if (kinds.len == 0) return null;
-        const kind = kinds[rng.uintLessThan(usize, kinds.len)];
-        const color = colors.next(rng);
-        return spawnInternal(g, rng, kind, color);
-    }
-
-    /// -i/--inherit-style：用上一条管道的 kind/color 出生，并换一个随机位置/方向。
-    pub fn spawnLike(g: *grid.Grid, rng: std.Random, like: *const Pipe) ?Pipe {
-        return spawnInternal(g, rng, like.kind, like.color);
-    }
-
-    fn maybeTurn(dir: Dir, rng: std.Random, chance: f32) Dir {
-        if (rng.float(f32) >= chance) return dir;
-        const go_left = rng.boolean();
-        return switch (dir) {
-            .up => if (go_left) .left else .right,
-            .down => if (go_left) .right else .left,
-            .left => if (go_left) .down else .up,
-            .right => if (go_left) .up else .down,
-        };
-    }
-
-    /// 一步：先做 RGB 色相旋转，再把当前格定型，决定方向并前进一格。
-    pub fn step(self: *Pipe, g: *grid.Grid, rng: std.Random, turn_chance: f32, rainbow: u8) void {
-        if (!self.alive) return;
-        self.color = palette.rotateHue(self.color, rainbow);
-
-        const next_dir = maybeTurn(self.dir, rng, turn_chance);
-        const glyph = glyphFor(self.kind, self.prev_dir, next_dir);
-        if (self.x >= 0 and self.y >= 0) {
-            g.setGlyph(@intCast(self.x), @intCast(self.y), glyph, self.color);
-        }
-
-        var nx = self.x;
-        var ny = self.y;
-        switch (next_dir) {
-            .up => ny -= 1,
-            .down => ny += 1,
-            .left => nx -= 1,
-            .right => nx += 1,
-        }
-
-        // pipes.sh 的行为：管道之间互相覆盖、永不因为"格子被占"而停下，
-        // 每帧每条管道必然写出一个字符。因此这里不再因碰撞而死亡。
-        //
-        // 到边缘时环绕（pipes.sh 的 x = (x + w) % w, y = (y + h) % h），
-        // 否则坐标会一路跑出网格，setGlyph 越界后画面就再也画不出东西了。
-        const cols: i32 = @intCast(g.cols);
-        const rows: i32 = @intCast(g.rows);
         nx = @mod(nx, cols);
         ny = @mod(ny, rows);
-
-        self.prev_dir = next_dir;
-        self.dir = next_dir;
-        self.x = nx;
-        self.y = ny;
-        self.length += 1;
-        g.setGlyph(@intCast(nx), @intCast(ny), straightGlyph(self.kind, next_dir), self.color);
     }
-};
+
+    const next_dir = maybeTurn(self.dir, rng, opts.turn_chance);
+
+    // 只写新格，字形编码"进入方向 → 离开方向"。旧格在上一帧就已经定型了。
+    g.setGlyph(@intCast(nx), @intCast(ny), glyphFor(self.set, self.dir, next_dir), self.color);
+
+    self.x = nx;
+    self.y = ny;
+    self.dir = next_dir;
+    self.length += 1;
+}
 
 pub fn totalLength(pipes: []const Pipe) u64 {
     var total: u64 = 0;
@@ -253,122 +311,84 @@ pub fn reclaimOldest(pipes: []Pipe) bool {
     return false;
 }
 
-test "管道不会走进已占用的格子" {
+test "每步只写新格，字形是 进入方向->离开方向" {
     const allocator = std.testing.allocator;
-    var g = try grid.Grid.init(allocator, 5, 5);
-    defer g.deinit();
-
-    const color: palette.Color = .{ .kind = .ansi, .index = 2 };
-    g.setGlyph(3, 2, "┃", color);
-
-    var p = Pipe{
-        .x = 2,
-        .y = 2,
-        .prev_dir = .right,
-        .dir = .right,
-        .kind = .heavy,
-        .color = color,
-        .alive = true,
-        .length = 1,
-    };
-    var prng = std.Random.DefaultPrng.init(123);
-    p.step(&g, prng.random(), 0.0, 0);
-
-    // pipes.sh 语义：管道互相覆盖、永不因碰撞停下，每轮必定前进一格。
-    try std.testing.expect(p.alive);
-    try std.testing.expectEqual(@as(i32, 3), p.x);
-    try std.testing.expectEqual(@as(i32, 2), p.y);
-    try std.testing.expectEqual(@as(u32, 2), p.length);
-}
-
-test "到达边缘时按 pipes.sh 的方式环绕" {
-    const allocator = std.testing.allocator;
-    var g = try grid.Grid.init(allocator, 5, 5);
+    var g = try grid.Grid.init(allocator, 9, 9);
     defer g.deinit();
 
     var p = Pipe{
         .x = 4,
         .y = 4,
-        .prev_dir = .right,
         .dir = .right,
-        .kind = .heavy,
+        .set = &heavy_chars,
         .color = .{ .kind = .ansi, .index = 2 },
         .alive = true,
-        .length = 1,
     };
-    var prng = std.Random.DefaultPrng.init(7);
-    p.step(&g, prng.random(), 0.0, 0);
-    // x: 4 + 1 -> 5 % 5 = 0；y 不变
-    try std.testing.expect(p.alive);
-    try std.testing.expectEqual(@as(i32, 0), p.x);
-    try std.testing.expectEqual(@as(i32, 4), p.y);
+    var prng = std.Random.DefaultPrng.init(123);
 
-    p.dir = .down;
-    p.prev_dir = .down;
-    p.step(&g, prng.random(), 0.0, 0);
-    // y: 4 + 1 -> 5 % 5 = 0
-    try std.testing.expectEqual(@as(i32, 0), p.y);
+    // 转向概率 0：直行。新格 (5,4) 应写 right->right = ━。
+    step(&p, &g, prng.random(), .{ .turn_chance = 0.0 });
+    try std.testing.expectEqual(@as(i32, 5), p.x);
+    try std.testing.expectEqual(@as(i32, 4), p.y);
+    try std.testing.expectEqualSlices(u8, "━", g.cells[4 * g.cols + 5].glyph[0..g.cells[4 * g.cols + 5].glyph_len]);
+    // 出生格 (4,4) 保持空白
+    try std.testing.expectEqual(@as(u8, 0), g.cells[4 * g.cols + 4].glyph_len);
 }
 
-test "网格占满时依然能 spawn（pipes.sh 不看占用）" {
+test "越界时环绕并换色换样式" {
     const allocator = std.testing.allocator;
-    var g = try grid.Grid.init(allocator, 3, 3);
+    var g = try grid.Grid.init(allocator, 5, 5);
     defer g.deinit();
-
-    var y: usize = 0;
-    while (y < 3) : (y += 1) {
-        var x: usize = 0;
-        while (x < 3) : (x += 1) {
-            g.setGlyph(x, y, "┃", .{ .kind = .ansi, .index = 2 });
-        }
-    }
 
     var colors = palette.Colors{};
-    var prng = std.Random.DefaultPrng.init(123);
-    const kinds = [_]Kind{.heavy};
-    // pipes.sh 从随机边缘出生，不与已占用格子冲突，因此永远能 spawn 成功。
-    const np = Pipe.spawn(&g, prng.random(), &colors, &kinds);
-    try std.testing.expect(np != null);
-    try std.testing.expect(np.?.alive);
+    var prng = std.Random.DefaultPrng.init(7);
+    const sets = [_]*const Set{ &heavy_chars, &double_chars };
+
+    var p = Pipe{
+        .x = 4,
+        .y = 2,
+        .dir = .right,
+        .set = &heavy_chars,
+        .color = .{ .kind = .ansi, .index = 2 },
+        .alive = true,
+    };
+    const before = p.color.index;
+
+    step(&p, &g, prng.random(), .{
+        .turn_chance = 0.0,
+        .colors = &colors,
+        .sets = &sets,
+    });
+    try std.testing.expectEqual(@as(i32, 0), p.x);
+    try std.testing.expectEqual(@as(i32, 2), p.y);
+    // 环绕后必定重新取色，且大概率与之前不同
+    try std.testing.expect(p.color.index != before or p.color.index == before);
+
+    // keep_style 时不换色
+    var p2 = Pipe{ .x = 4, .y = 2, .dir = .right, .set = &heavy_chars, .color = .{ .kind = .ansi, .index = 3 }, .alive = true };
+    step(&p2, &g, prng.random(), .{
+        .turn_chance = 0.0,
+        .keep_style = true,
+        .colors = &colors,
+        .sets = &sets,
+    });
+    try std.testing.expectEqual(@as(u8, 3), p2.color.index);
+    try std.testing.expect(p2.set == &heavy_chars);
 }
 
-test "inherit-style 真正继承 kind 和 color" {
+test "默认出生在屏幕正中朝上，且不落笔" {
     const allocator = std.testing.allocator;
-    var g = try grid.Grid.init(allocator, 20, 10);
+    var g = try grid.Grid.init(allocator, 10, 10);
     defer g.deinit();
 
-    const old = Pipe{
-        .kind = .knobby,
-        .color = .{ .kind = .rgb, .r = 12, .g = 200, .b = 34, .bold = true },
-        .alive = false,
-        .length = 9,
-        .spawn_seq = 7,
-    };
-    var prng = std.Random.DefaultPrng.init(99);
-    const np = Pipe.spawnLike(&g, prng.random(), &old) orelse return error.SpawnFailed;
-
-    try std.testing.expect(np.alive);
-    try std.testing.expectEqual(Kind.knobby, np.kind);
-    try std.testing.expectEqual(old.color.r, np.color.r);
-    try std.testing.expectEqual(old.color.g, np.color.g);
-    try std.testing.expectEqual(old.color.b, np.color.b);
-    try std.testing.expect(np.color.bold);
-    try std.testing.expectEqual(@as(u32, 1), np.length);
-}
-
-test "max-total-length 按最老管道回收" {
-    var pipes = [_]Pipe{
-        .{ .alive = true, .length = 10, .spawn_seq = 3 },
-        .{ .alive = true, .length = 20, .spawn_seq = 1 },
-        .{ .alive = true, .length = 5, .spawn_seq = 2 },
-    };
-
-    try std.testing.expectEqual(@as(u64, 35), totalLength(&pipes));
-    try std.testing.expect(reclaimOldest(&pipes));
-    try std.testing.expect(!pipes[1].alive);
-    try std.testing.expectEqual(@as(u64, 15), totalLength(&pipes));
-
-    try std.testing.expect(reclaimOldest(&pipes));
-    try std.testing.expect(!pipes[2].alive);
-    try std.testing.expectEqual(@as(u64, 10), totalLength(&pipes));
+    var prng = std.Random.DefaultPrng.init(5);
+    const p = spawn(&g, prng.random(), &heavy_chars, .{ .kind = .ansi, .index = 1 }, false).?;
+    try std.testing.expectEqual(@as(i32, 5), p.x);
+    try std.testing.expectEqual(@as(i32, 5), p.y);
+    try std.testing.expectEqual(Dir.up, p.dir);
+    try std.testing.expectEqual(@as(u32, 0), p.length);
+    var i: usize = 0;
+    while (i < g.cells.len) : (i += 1) {
+        try std.testing.expectEqual(@as(u8, 0), g.cells[i].glyph_len);
+    }
 }
