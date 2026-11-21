@@ -171,7 +171,7 @@ pub fn read_nonblock(fd: posix.fd_t, buf: []u8) Rc {
 }
 
 pub fn getpid() Rc {
-    if (is_linux) return std.os.linux.getpid();
+    if (is_linux) return @intCast(std.os.linux.getpid());
     return @intCast(std.c.getpid());
 }
 
@@ -206,7 +206,7 @@ pub const ioctl_req = if (is_linux) struct {
 /// 就用 poll + nanosleep 实现（语义等价：有无超时都可，不看 sigmask）。
 /// 返回值：>0 就绪个数，0 超时，负数 -errno。
 pub fn ppoll(fds: []posix.pollfd, timeout: ?*const posix.timespec, sigmask: ?*const posix.sigset_t) Rc {
-    if (is_linux) return std.os.linux.ppoll(fds, timeout, sigmask, std.posix.system.NFDBITS);
+    if (is_linux) return std.os.linux.ppoll(fds.ptr, @intCast(fds.len), @constCast(timeout), if (sigmask) |s| @ptrCast(s) else null);
 
     var ms: i32 = -1; // -1 = 无限等待
     if (timeout) |t| {

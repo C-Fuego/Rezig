@@ -103,7 +103,7 @@ fn packSprites(io: std.Io, arena: std.mem.Allocator) !void {
     defer dir.close(io);
 
     var walker = try dir.walk(arena);
-    defer walker.deinit();
+    defer walker.deinit(io);
 
     var paths: std.ArrayList([]const u8) = .empty;
     var newest: i96 = 0;

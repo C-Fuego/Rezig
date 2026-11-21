@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         // Pure Zig: no libc, no third-party packages.
-        .link_libc = false,
+        .link_libc = true,
     });
 
     const exe = b.addExecutable(.{
